@@ -77,14 +77,14 @@ define('USER', 'root');
 define('PASSWORD', '');
 define('DATABASE', '');
 
-// ADD THESE FOR TRONBRIDGE:
+// ADD THESE FOR TRONBRIDGE IF USING POSTGRESQL OR SQLITE FOR MAIN DATABASE
 
-// For SQLite (great for development)
-define('DB_TYPE', 'sqlite');
-define('DB_FILE', APPPATH . 'storage/trongate.sqlite');
+// For SQLite
+// define('DB_TYPE', 'sqlite');
+// define('DB_FILE', APPPATH . 'database/storage/trongate.sqlite');
 
-// For PostgreSQL (uncomment and configure)
-// define('DB_TYPE', 'postgresql');
+// For PostgreSQL 
+// define('DB_TYPE', 'postgres');
 // define('HOST', 'localhost');
 // define('PORT', '5432');
 // define('DATABASE', 'your_database');
@@ -117,7 +117,7 @@ try {
     // Test TronBridge features
     $capabilities = $model->backup()->getCapabilities();
     echo "✅ Database type: " . $capabilities['database_type'] . "\n";
-    echo "✅ Backup strategies available: " . count($capabilities['strategies']) . "\n";
+    echo "✅ Backup strategies available: " . count($capabilities['available_strategies']) . "\n";
     
     // Test debug system
     $model->setDebugPreset('cli');
@@ -197,18 +197,10 @@ If you use **Trongate Module Market add-ons** that include SQL dump files, you c
 
 ### **Installation**
 ```bash
-# Backup existing transferer (if you have customizations)
-cp -r engine/tg_transferer engine/tg_transferer.backup
-
 # Install Enhanced Transferer
 cp -r /path/to/tronbridge/engine/tg_transferer /path/to/your/trongate/app/engine/
 ```
 
-### **Usage**
-1. Navigate to `yoursite.com/tg_transferer` in your browser
-2. Upload a module SQL file
-3. Select target database type (MySQL, SQLite, PostgreSQL)
-4. The Enhanced Transferer will automatically translate the SQL for your database type
 
 ## 🗂️ **File Structure After Installation**
 
@@ -228,43 +220,25 @@ your-trongate-app/
 │       ├── index.php
 │       ├── Transferer.php
 │       └── TransfererDetection.php
-├── database/                            # ✨ TronBridge Components (new)
-│   ├── engine/
-│   │   ├── backup/                      # Backup and restore system
-│   │   ├── core/                        # Core TronBridge components
-│   │   ├── debug/                       # Debug system
-│   │   ├── exceptions/                  # Exception classes
-│   │   ├── factories/                   # Factory classes
-│   │   ├── helpers/                     # Helper utilities
-│   │   ├── migration/                   # Migration tools
-│   │   ├── schema/                      # Schema translation
-│   │   └── traits/                      # Shared traits
-│   └── storage/                         # Database files (SQLite)
-└── scripts/                             # 🔧 Optional: CLI tools
-    ├── backup-cli.php
-    ├── migration-cli.php
-    └── sql-dump-translator.php
+└── database/                            # ✨ TronBridge Components (new)
+    ├── engine/
+    │   ├── backup/                      # Backup and restore system
+    │   ├── core/                        # Core TronBridge components
+    │   ├── debug/                       # Debug system
+    │   ├── exceptions/                  # Exception classes
+    │   ├── factories/                   # Factory classes
+    │   ├── helpers/                     # Helper utilities
+    │   ├── migration/                   # Migration tools
+    │   ├── schema/                      # Schema translation
+    │   └── traits/                      # Shared traits
+    └── scripts/                         # 🔧 Optional: CLI tools
+    │   ├── backup-cli.php
+    │   ├── migration-cli.php
+    │   └── sql-dump-translator.php
+    └── storage/                         # Database files (SQLite)
 ```
 
 ## 🔍 **Installation Verification**
-
-### **Basic Functionality Test**
-```php
-<?php
-// Create a test model
-$model = new Model('test');
-
-// Test multi-database support
-echo "Database type: " . $model->backup()->getCapabilities()['database_type'] . "\n";
-
-// Test debug system
-$model->setDebugPreset('cli');
-echo "Debug system ready\n";
-
-// Test backup system
-$testResult = $model->backup()->testCapabilities();
-echo "Backup strategies available: " . count($testResult) . "\n";
-```
 
 ### **Multi-Database Test**
 ```php
@@ -272,7 +246,7 @@ echo "Backup strategies available: " . count($testResult) . "\n";
 // Test different database connections
 try {
     // SQLite test
-    $sqliteModel = new Model('test', 'sqlite::memory:');
+    $sqliteModel = new Model(null, 'sqlite::memory:');
     echo "✅ SQLite support working\n";
     
     // MySQL test (using existing config)
@@ -293,13 +267,13 @@ try {
 ### **CLI Tools Test** (if installed)
 ```bash
 # Test backup CLI
-php scripts/backup-cli.php --help
+php database/scripts/backup-cli.php --help
 
 # Test migration CLI  
-php scripts/migration-cli.php --help
+php database/scripts/migration-cli.php --help
 
 # Test SQL translator
-php scripts/sql-dump-translator.php --help
+php database/scripts/sql-dump-translator.php --help
 ```
 
 ## 🔄 **Rollback Instructions**
@@ -315,9 +289,6 @@ rm -rf database/
 
 # Remove enhanced transferer (if installed)
 rm -rf engine/tg_transferer/
-
-# Remove CLI scripts (if installed)
-rm -rf scripts/
 ```
 
 Your application will return to standard Trongate functionality.
@@ -360,11 +331,11 @@ sudo systemctl status mysql
 **For SQLite:**
 ```bash
 # Check if directory is writable
-chmod 755 storage/
-ls -la storage/
+chmod 755 database/storage/
+ls -la database/storage/
 
 # Verify DB_FILE path exists
-php -r "echo realpath(APPPATH . 'storage/') . '\n';"
+php -r "echo realpath(APPPATH . 'database/storage/') . '\n';"
 ```
 
 **For PostgreSQL:**
@@ -374,84 +345,6 @@ sudo systemctl status postgresql
 
 # Test connection manually
 psql -h localhost -U your_username -d your_database
-```
-
-### **Missing PDO Extensions**
-
-**Problem**: PDO extension missing
-```
-Fatal error: Class 'PDO' not found
-```
-
-**Solutions**:
-
-**Ubuntu/Debian:**
-```bash
-# Install required extensions
-sudo apt-get update
-sudo apt-get install php-mysql php-sqlite3 php-pgsql
-
-# Restart web server
-sudo systemctl restart apache2
-# or
-sudo systemctl restart nginx
-```
-
-**CentOS/RHEL:**
-```bash
-# Install required extensions
-sudo yum install php-mysql php-pdo php-pgsql
-
-# Restart web server
-sudo systemctl restart httpd
-```
-
-**macOS (Homebrew):**
-```bash
-# Extensions usually included with PHP
-brew install php
-
-# Verify extensions
-php -m | grep pdo
-```
-
-### **Permission Issues**
-
-**Problem**: Cannot write to database or backup directories
-
-**Solution**: Set correct permissions
-```bash
-# Set directory permissions
-chmod 755 database/
-chmod 755 storage/
-chmod 755 backup/
-
-# Set file permissions
-chmod 644 database/engine/*/*.php
-chmod 644 engine/Model.php
-```
-
-### **Enhanced Transferer Issues**
-
-**Problem**: Enhanced Transferer not accessible
-
-**Solutions**:
-1. **Check file permissions:**
-```bash
-chmod -R 755 engine/tg_transferer/
-```
-
-2. **Verify web server can access the directory:**
-```bash
-# Test by visiting: yoursite.com/tg_transferer
-# Should see the transferer interface
-```
-
-3. **Check for mod_rewrite issues** (Apache):
-```apache
-# In .htaccess, ensure:
-RewriteEngine On
-RewriteRule ^tg_transferer(/.*)?$ engine/tg_transferer/index.php [L]
 ```
 
 ### **Performance Issues**

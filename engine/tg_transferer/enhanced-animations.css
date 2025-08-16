@@ -1,0 +1,489 @@
+/* Enhanced Animations and Micro-interactions */
+
+/* Loading animations */
+.loading-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: #ffffff;
+    animation: spin 1s ease-in-out infinite;
+}
+
+.loading-dots::after {
+    content: '';
+    animation: loadingDots 1.5s steps(4, end) infinite;
+}
+
+@keyframes loadingDots {
+    0%, 20% { content: ''; }
+    40% { content: '.'; }
+    60% { content: '..'; }
+    80%, 100% { content: '...'; }
+}
+
+/* Button hover effects */
+button {
+    position: relative;
+    overflow: hidden;
+}
+
+button::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.2),
+        transparent
+    );
+    transition: left 0.5s;
+}
+
+button:hover::before {
+    left: 100%;
+}
+
+/* File item animations */
+.file-list-item {
+    transform: scale(1);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.file-list-item:hover {
+    transform: scale(1.02) translateY(-4px);
+}
+
+.file-list-item:active {
+    transform: scale(0.98) translateY(-2px);
+    transition: all 0.1s ease;
+}
+
+/* Database badge animations */
+.db-badge {
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+.db-badge:hover {
+    transform: scale(1.1);
+    box-shadow: 0 4px 8px rgba(33, 150, 243, 0.3);
+}
+
+.translation-badge {
+    animation: pulse 2s ease-in-out infinite;
+    position: relative;
+}
+
+.translation-badge::after {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    right: -2px;
+    bottom: -2px;
+    background: inherit;
+    border-radius: inherit;
+    opacity: 0.5;
+    z-index: -1;
+    animation: pulseGlow 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+@keyframes pulseGlow {
+    0%, 100% { 
+        transform: scale(1);
+        opacity: 0.5;
+    }
+    50% { 
+        transform: scale(1.1);
+        opacity: 0.2;
+    }
+}
+
+/* Progress bar animations */
+.progress-bar {
+    position: relative;
+    overflow: hidden;
+}
+
+.progress-bar::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    right: 0;
+    background-image: linear-gradient(
+        -45deg,
+        rgba(255, 255, 255, 0.1) 25%,
+        transparent 25%,
+        transparent 50%,
+        rgba(255, 255, 255, 0.1) 50%,
+        rgba(255, 255, 255, 0.1) 75%,
+        transparent 75%,
+        transparent
+    );
+    background-size: 50px 50px;
+    animation: progressStripes 1s linear infinite;
+}
+
+@keyframes progressStripes {
+    0% { background-position: 0 0; }
+    100% { background-position: 50px 50px; }
+}
+
+/* Success animations */
+.success-checkmark {
+    display: inline-block;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--success);
+    position: relative;
+    animation: successPop 0.6s ease;
+}
+
+.success-checkmark::after {
+    content: '✓';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: white;
+    font-weight: bold;
+    animation: checkmarkDraw 0.3s ease 0.3s both;
+}
+
+@keyframes successPop {
+    0% {
+        transform: scale(0);
+        opacity: 0;
+    }
+    50% {
+        transform: scale(1.2);
+    }
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+@keyframes checkmarkDraw {
+    0% {
+        transform: translate(-50%, -50%) scale(0);
+    }
+    100% {
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
+/* Error animations */
+.error-shake {
+    animation: shake 0.5s ease-in-out;
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+    20%, 40%, 60%, 80% { transform: translateX(5px); }
+}
+
+/* Notification slide animations */
+.notification {
+    animation: slideInRight 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+.notification.removing {
+    animation: slideOutRight 0.3s ease forwards;
+}
+
+@keyframes slideOutRight {
+    to {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+}
+
+/* Modal/overlay animations */
+.help-overlay {
+    animation: overlayFadeIn 0.3s ease;
+}
+
+.help-overlay.closing {
+    animation: overlayFadeOut 0.3s ease forwards;
+}
+
+@keyframes overlayFadeIn {
+    from {
+        opacity: 0;
+        backdrop-filter: blur(0px);
+    }
+    to {
+        opacity: 1;
+        backdrop-filter: blur(4px);
+    }
+}
+
+@keyframes overlayFadeOut {
+    from {
+        opacity: 1;
+        backdrop-filter: blur(4px);
+    }
+    to {
+        opacity: 0;
+        backdrop-filter: blur(0px);
+    }
+}
+
+.help-container {
+    animation: modalSlideUp 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes modalSlideUp {
+    from {
+        transform: translateY(50px) scale(0.95);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+    }
+}
+
+/* Comparison view animations */
+.comparison-view {
+    animation: fadeInScale 0.5s ease;
+}
+
+.comparison-side {
+    animation: slideInFromSide 0.6s ease;
+    animation-fill-mode: both;
+}
+
+.comparison-side:first-child {
+    animation-delay: 0.1s;
+}
+
+.comparison-side:last-child {
+    animation-delay: 0.2s;
+}
+
+@keyframes slideInFromSide {
+    from {
+        transform: translateX(-30px);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* Textarea focus animations */
+textarea {
+    transition: all 0.3s ease;
+}
+
+textarea:focus {
+    transform: scale(1.01);
+}
+
+/* Status indicator animations */
+.status-success {
+    animation: statusSuccess 0.6s ease;
+}
+
+.status-warning {
+    animation: statusWarning 0.6s ease;
+}
+
+.status-error {
+    animation: statusError 0.6s ease;
+}
+
+@keyframes statusSuccess {
+    0% {
+        background: rgba(76, 175, 80, 0);
+        transform: scale(0.9);
+    }
+    50% {
+        background: rgba(76, 175, 80, 0.3);
+        transform: scale(1.05);
+    }
+    100% {
+        background: rgba(76, 175, 80, 0.15);
+        transform: scale(1);
+    }
+}
+
+@keyframes statusWarning {
+    0% {
+        background: rgba(255, 152, 0, 0);
+        transform: scale(0.9);
+    }
+    50% {
+        background: rgba(255, 152, 0, 0.3);
+        transform: scale(1.05);
+    }
+    100% {
+        background: rgba(255, 152, 0, 0.15);
+        transform: scale(1);
+    }
+}
+
+@keyframes statusError {
+    0% {
+        background: rgba(244, 67, 54, 0);
+        transform: scale(0.9);
+    }
+    50% {
+        background: rgba(244, 67, 54, 0.3);
+        transform: scale(1.05);
+    }
+    100% {
+        background: rgba(244, 67, 54, 0.15);
+        transform: scale(1);
+    }
+}
+
+/* Hover state micro-interactions */
+.file-name {
+    transition: color 0.2s ease;
+}
+
+.file-list-item:hover .file-name {
+    color: #4CAF50;
+}
+
+.database-badges {
+    transition: transform 0.2s ease;
+}
+
+.file-list-item:hover .database-badges {
+    transform: scale(1.05);
+}
+
+/* Loading state animations */
+.loading-container {
+    animation: loadingPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes loadingPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+/* Button ripple effect */
+@keyframes ripple {
+    to {
+        transform: scale(4);
+        opacity: 0;
+    }
+}
+
+button {
+    position: relative;
+    overflow: hidden;
+}
+
+button::after {
+    content: '';
+    position: absolute;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.3);
+    transform: scale(0);
+    animation: ripple 0.6s linear;
+    pointer-events: none;
+}
+
+button:active::after {
+    animation: ripple 0.3s linear;
+}
+
+/* Enhanced file list stagger animation */
+.file-list-item:nth-child(1) { animation-delay: 0.1s; }
+.file-list-item:nth-child(2) { animation-delay: 0.15s; }
+.file-list-item:nth-child(3) { animation-delay: 0.2s; }
+.file-list-item:nth-child(4) { animation-delay: 0.25s; }
+.file-list-item:nth-child(5) { animation-delay: 0.3s; }
+.file-list-item:nth-child(6) { animation-delay: 0.35s; }
+
+/* Page transition animations */
+.page-transition {
+    animation: pageSlideIn 0.5s ease;
+}
+
+@keyframes pageSlideIn {
+    from {
+        transform: translateY(20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+/* Enhanced enhanced-status animation */
+.enhanced-status {
+    animation: enhancedStatusSlide 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+@keyframes enhancedStatusSlide {
+    from {
+        transform: translateY(-20px) scale(0.95);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+    }
+}
+
+/* Accessibility: Reduce animations for users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* Dark mode adaptations */
+@media (prefers-color-scheme: dark) {
+    .file-list-item {
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+    
+    .file-list-item:hover {
+        border-color: rgba(255, 255, 255, 0.3);
+    }
+}
+
+/* High contrast mode adaptations */
+@media (prefers-contrast: high) {
+    button {
+        border: 2px solid currentColor;
+    }
+    
+    .file-list-item {
+        border: 2px solid rgba(255, 255, 255, 0.5);
+    }
+    
+    .db-badge {
+        border: 2px solid currentColor;
+    }
+}

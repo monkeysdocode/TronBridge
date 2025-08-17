@@ -350,7 +350,6 @@ We're actively seeking beta testers to help validate TronBridge across different
 - 📖 **Documentation**: Comprehensive guides in `/docs/`
 - 🐛 **Issues**: GitHub Issues for bug reports and feature requests
 - 💬 **Discussions**: GitHub Discussions for questions and community support
-- 📧 **Contact**: [Maintainer contact information]
 
 ### **Contributing**
 - Fork the repository and create feature branches

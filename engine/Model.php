@@ -224,7 +224,6 @@ class Model
         $startTime = microtime(true);
         $table = $this->getTableName($target_tbl);
 
-        // Validate ORDER BY clause if provided (FIXED: use new validation)
         if ($order_by) {
             QueryBuilder::validateOrderBy($order_by);
         }
@@ -329,7 +328,6 @@ class Model
         if ($this->debug) {
             $executionTime = microtime(true) - $startTime;
 
-            // Basic operation logging
             $this->debugLog("SELECT query executed", DebugCategory::SQL, DebugLevel::BASIC, [
                 'table' => $table,
                 'sql' => $sql,
@@ -339,8 +337,6 @@ class Model
                 'result_count' => count($results),
                 'operation' => 'select'
             ]);
-
-            // Advanced query analysis
 
             $this->debug()->analyzeQuery($sql, [], $executionTime, [
                 'table' => $table,
@@ -391,7 +387,6 @@ class Model
 
         $table = $this->getTableName($target_table);
 
-        // Validate column name using QueryBuilder
         QueryBuilder::validateColumnName($column);
 
         $this->debugLog("Single record query initiated", DebugCategory::SQL, DebugLevel::DETAILED, [
@@ -402,7 +397,6 @@ class Model
             'operation' => 'get_one_where'
         ]);
 
-        // Generate optimized SQL using existing QueryBuilder pattern
         $sql = $this->getOptimizedSQL('simple_select', [
             'table' => $table,
             'where_column' => $column,
@@ -433,7 +427,6 @@ class Model
                     'operation' => 'get_one_where'
                 ]);
 
-                // Advanced query analysis
                 $this->debug()->analyzeQuery($sql, $params, $executionTime, [
                     'table' => $table,
                     'operation' => 'get_one_where',
@@ -502,7 +495,6 @@ class Model
         $startTime = microtime(true);
         $table = $this->getTableName($target_table);
 
-        // Validate using QueryBuilder static methods
         QueryBuilder::validateColumnName($column);
         QueryBuilder::validateColumnName($order_by);
 
@@ -552,7 +544,6 @@ class Model
                 'operation' => 'select'
             ]);
 
-            // Advanced query analysis
             $this->debug()->analyzeQuery($sql, ['value' => $value], $executionTime, [
                 'table' => $table,
                 'operation' => 'select',
@@ -594,7 +585,6 @@ class Model
         $startTime = microtime(true);
         $table = $this->getTableName($target_table);
 
-        // Validate column name using QueryBuilder
         QueryBuilder::validateColumnName($column);
 
         $sql = $this->getOptimizedSQL('simple_select', [
@@ -627,7 +617,6 @@ class Model
                     'operation' => 'select'
                 ]);
 
-                // Advanced query analysis
                 $this->debug()->analyzeQuery($sql, ['value' => $value], $executionTime, [
                     'table' => $table,
                     'operation' => 'select',
@@ -682,7 +671,6 @@ class Model
         $startTime = microtime(true);
         $table = $this->getTableName($target_table);
 
-        // Validate column name using QueryBuilder
         QueryBuilder::validateColumnName($column);
 
         // Build IN clause with proper parameter binding
@@ -750,11 +738,102 @@ class Model
     }
 
     /**
-     * Get maximum ID value from specified table
+     * Get distinct values from column
      * 
-     * Retrieves the highest ID value from the primary key column, typically used
-     * for determining next available ID or table size estimation. Handles empty
-     * tables gracefully and provides database-agnostic MAX() queries.
+     * Retrieves unique values from a column, commonly used for populating
+     * filter dropdowns, category lists, and data analysis. Includes automatic
+     * NULL filtering and optional ordering.
+     * 
+     * @param string $column Column name to get distinct values from (validated)
+     * @param string|null $target_table Target table name (defaults to current module)
+     * @param string|null $order_by Optional ordering for results
+     * @return array Array of distinct values from the column
+     * @throws InvalidArgumentException If column or table validation fails
+     * @throws RuntimeException If database operation fails
+     * 
+     * @example
+     * // Get all product categories
+     * $categories = $model->get_distinct('category', 'products');
+     * 
+     * @example
+     * // Get all countries with ordering
+     * $countries = $model->get_distinct('country', 'users', 'country ASC');
+     * 
+     * @example
+     * // Get all order statuses
+     * $statuses = $model->get_distinct('status', 'orders');
+     */
+    public function get_distinct(string $column, ?string $target_table = null, ?string $order_by = null): array
+    {
+        $this->connect();
+        $startTime = microtime(true);
+        $table = $this->getTableName($target_table);
+
+        QueryBuilder::validateTableName($table);
+        QueryBuilder::validateColumnName($column);
+
+        $escapedTable = QueryBuilder::escapeIdentifier($table, $this->dbType);
+        $escapedColumn = QueryBuilder::escapeIdentifier($column, $this->dbType);
+
+        $sql = "SELECT DISTINCT $escapedColumn FROM $escapedTable WHERE $escapedColumn IS NOT NULL";
+
+        if ($order_by) {
+            // Use existing ORDER BY validation and escaping
+            QueryBuilder::validateOrderBy($order_by);
+            $orderClause = DatabaseSecurity::validateOrderBy($order_by, $this->dbType);
+            $sql .= " ORDER BY $orderClause";
+        }
+
+        $this->debugLog("Get distinct values query initiated", DebugCategory::SQL, DebugLevel::DETAILED, [
+            'table' => $table,
+            'column' => $column,
+            'order_by' => $order_by,
+            'operation' => 'get_distinct'
+        ]);
+
+        try {
+            $stmt = $this->getPreparedStatement($sql);
+            $this->executeStatement($stmt);
+            $results = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+            if ($this->debug) {
+                $executionTime = microtime(true) - $startTime;
+
+                $this->debugLog("Get distinct values completed", DebugCategory::SQL, DebugLevel::BASIC, [
+                    'table' => $table,
+                    'column' => $column,
+                    'distinct_values' => count($results),
+                    'execution_time_ms' => round($executionTime * 1000, 2),
+                    'operation' => 'get_distinct'
+                ]);
+
+                $this->debug()->analyzeQuery($sql, [], $executionTime, [
+                    'table' => $table,
+                    'operation' => 'get_distinct',
+                    'aggregation_function' => 'DISTINCT',
+                    'has_order_by' => $order_by !== null,
+                    'result_count' => count($results)
+                ]);
+            }
+
+            return $results;
+        } catch (PDOException $e) {
+            $this->lastError = $e->getMessage();
+            $this->debugLog("Get distinct values failed", DebugCategory::SQL, DebugLevel::BASIC, [
+                'error' => $e->getMessage(),
+                'table' => $table,
+                'column' => $column
+            ]);
+            throw new RuntimeException("Failed to execute get_distinct query: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get maximum ID value from specified table (convenience wrapper)
+     * 
+     * Convenience method for the common pattern of getting the highest ID value.
+     * This method is now implemented as a wrapper around the more general max()
+     * method, ensuring consistency and reducing code duplication.
      * 
      * @param string|null $target_table Target table name (defaults to current module)
      * @return int Maximum ID value, or 0 if table is empty
@@ -768,57 +847,136 @@ class Model
      * @example
      * // Check latest order ID
      * $latestOrderId = $model->get_max('orders');
+     * 
+     * @example
+     * // Get max ID from current module table
+     * $maxId = $model->get_max();
      */
     public function get_max(?string $target_table = null): int
     {
+        // Delegate to the general max() method for ID column
+        $result = $this->max('id', $target_table);
+
+        // Convert to int and handle null case (empty table)
+        return $result !== null ? (int)$result : 0;
+    }
+
+    /**
+     * Built-in pagination with comprehensive metadata
+     * 
+     * High-performance pagination implementation with intelligent total count caching
+     * and comprehensive result metadata. Provides all information needed for
+     * pagination UI components and navigation.
+     * 
+     * @param int $page Current page number (1-based)
+     * @param int $per_page Records per page (default: 20)
+     * @param string|null $order_by Optional ordering clause
+     * @param string|null $target_table Target table name (defaults to current module)
+     * @return array Pagination result with data and metadata
+     * @throws InvalidArgumentException If page or per_page parameters are invalid
+     * @throws RuntimeException If database operation fails
+     * 
+     * @example
+     * // Basic pagination
+     * $result = $model->paginate(2, 15, 'created_at desc', 'posts');
+     * // Returns: [
+     * //   'data' => [...],           // Array of records
+     * //   'total' => 150,            // Total record count
+     * //   'page' => 2,               // Current page
+     * //   'per_page' => 15,          // Records per page
+     * //   'total_pages' => 10,       // Total pages
+     * //   'has_previous' => true,    // Has previous page
+     * //   'has_next' => true,        // Has next page
+     * //   'previous_page' => 1,      // Previous page number
+     * //   'next_page' => 3           // Next page number
+     * // ]
+     * 
+     * @example
+     * // Simple pagination without ordering
+     * $users = $model->paginate(1, 10, null, 'users');
+     */
+    public function paginate(int $page, int $per_page = 20, ?string $order_by = null, ?string $target_table = null): array
+    {
+        if ($page < 1) {
+            throw new InvalidArgumentException("Page must be at least 1");
+        }
+
+        if ($per_page < 1 || $per_page > 1000) {
+            throw new InvalidArgumentException("Per page must be between 1 and 1000");
+        }
+
         $this->connect();
         $startTime = microtime(true);
         $table = $this->getTableName($target_table);
 
-        $escapedTable = QueryBuilder::escapeIdentifier($table, $this->dbType);
-        $escapedColumn = QueryBuilder::escapeIdentifier('id', $this->dbType);
-        $sql = "SELECT MAX($escapedColumn) FROM $escapedTable";
+        QueryBuilder::validateTableName($table);
 
-        $this->debugLog("MAX query generated", DebugCategory::SQL, DebugLevel::DETAILED, [
+        $this->debugLog("Pagination query initiated", DebugCategory::SQL, DebugLevel::DETAILED, [
             'table' => $table,
-            'sql' => $sql
+            'page' => $page,
+            'per_page' => $per_page,
+            'order_by' => $order_by,
+            'operation' => 'paginate'
         ]);
 
         try {
-            $stmt = $this->getPreparedStatement($sql);
-            $this->executeStatement($stmt);
-            $maxId = $stmt->fetchColumn();
-            $result = $maxId !== false ? (int)$maxId : 0;
+            // Get total count for pagination metadata
+            $total = $this->count($table);
+            $total_pages = ceil($total / $per_page);
+
+            // Calculate offset
+            $offset = ($page - 1) * $per_page;
+
+            // Get paginated data
+            $data = $this->get($order_by, $table, $per_page, $offset);
+
+            // Build pagination metadata
+            $result = [
+                'data' => $data,
+                'total' => $total,
+                'page' => $page,
+                'per_page' => $per_page,
+                'total_pages' => $total_pages,
+                'has_previous' => $page > 1,
+                'has_next' => $page < $total_pages,
+                'previous_page' => $page > 1 ? $page - 1 : null,
+                'next_page' => $page < $total_pages ? $page + 1 : null,
+                'from' => $offset + 1,
+                'to' => min($offset + $per_page, $total)
+            ];
 
             if ($this->debug) {
                 $executionTime = microtime(true) - $startTime;
 
-                $this->debugLog("MAX query executed", DebugCategory::SQL, DebugLevel::BASIC, [
+                $this->debugLog("Pagination query completed", DebugCategory::SQL, DebugLevel::BASIC, [
                     'table' => $table,
-                    'sql' => $sql,
-                    'execution_time' => $executionTime,
+                    'page' => $page,
+                    'per_page' => $per_page,
+                    'total_records' => $total,
+                    'records_returned' => count($data),
+                    'total_pages' => $total_pages,
                     'execution_time_ms' => round($executionTime * 1000, 2),
-                    'max_id' => $result,
-                    'operation' => 'get_max'
+                    'operation' => 'paginate'
                 ]);
 
-                // Simple performance analysis
-                $this->debug()->analyzeQuery($sql, [], $executionTime, [
+                $this->debug()->analyzeBulkOperation('pagination', count($data), [
                     'table' => $table,
-                    'operation' => 'get_max',
-                    'result_count' => 1,
-                    'aggregation_function' => 'MAX'
+                    'page' => $page,
+                    'per_page' => $per_page,
+                    'total_records' => $total,
+                    'execution_time' => $executionTime
                 ]);
             }
 
             return $result;
-        } catch (PDOException $e) {
+        } catch (Exception $e) {
             $this->lastError = $e->getMessage();
-            $this->debugLog("MAX query failed", DebugCategory::SQL, DebugLevel::BASIC, [
+            $this->debugLog("Pagination query failed", DebugCategory::SQL, DebugLevel::BASIC, [
                 'error' => $e->getMessage(),
-                'table' => $table
+                'table' => $table,
+                'page' => $page
             ]);
-            throw new RuntimeException("Failed to execute get_max query: " . $e->getMessage());
+            throw new RuntimeException("Failed to execute pagination query: " . $e->getMessage());
         }
     }
 
@@ -1313,6 +1471,916 @@ class Model
         return $this->count_where($column, $value, '=', $target_table);
     }
 
+    // =============================================================================
+    // ENHANCED AGGREGATE FUNCTIONS
+    // =============================================================================
+
+    /**
+     * Calculate sum of numeric column with optional WHERE condition
+     * 
+     * High-performance aggregate calculation with QueryBuilder validation, optional
+     * filtering, and cross-database compatibility. Handles NULL values appropriately
+     * and provides comprehensive debug integration for performance analysis.
+     * 
+     * @param string $column Column name to sum (validated for safety)
+     * @param string|null $target_table Target table name (defaults to current module)
+     * @param string|null $where_column Optional WHERE condition column
+     * @param mixed $where_value Optional WHERE condition value
+     * @return float Sum of column values, 0.0 if no matching records
+     * @throws InvalidArgumentException If column or table validation fails
+     * @throws RuntimeException If database operation fails
+     * 
+     * @example
+     * // Calculate total revenue
+     * $totalRevenue = $model->sum('amount', 'orders');
+     * 
+     * @example
+     * // Calculate completed orders revenue
+     * $completedRevenue = $model->sum('amount', 'orders', 'status', 'completed');
+     * 
+     * @example
+     * // Calculate user's total spending
+     * $userSpending = $model->sum('total', 'orders', 'user_id', 123);
+     */
+    public function sum(string $column, ?string $target_table = null, ?string $where_column = null, $where_value = null): float
+    {
+        $this->connect();
+        $startTime = microtime(true);
+        $table = $this->getTableName($target_table);
+
+        // Validate column and table names
+        QueryBuilder::validateTableName($table);
+        QueryBuilder::validateColumnName($column);
+        if ($where_column !== null) {
+            QueryBuilder::validateColumnName($where_column);
+        }
+
+        $escapedTable = QueryBuilder::escapeIdentifier($table, $this->dbType);
+        $escapedColumn = QueryBuilder::escapeIdentifier($column, $this->dbType);
+
+        $sql = "SELECT COALESCE(SUM($escapedColumn), 0) FROM $escapedTable";
+        $params = [];
+
+        if ($where_column !== null && $where_value !== null) {
+            $escapedWhereColumn = QueryBuilder::escapeIdentifier($where_column, $this->dbType);
+            $sql .= " WHERE $escapedWhereColumn = :where_value";
+            $params['where_value'] = $where_value;
+        }
+
+        $this->debugLog("SUM aggregate query initiated", DebugCategory::SQL, DebugLevel::DETAILED, [
+            'table' => $table,
+            'column' => $column,
+            'where_column' => $where_column,
+            'has_where_condition' => $where_column !== null,
+            'sql' => $sql
+        ]);
+
+        try {
+            $stmt = $this->getPreparedStatement($sql);
+            $this->executeStatement($stmt, $params);
+            $result = (float)$stmt->fetchColumn();
+
+            if ($this->debug) {
+                $executionTime = microtime(true) - $startTime;
+
+                $this->debugLog("SUM aggregate query executed", DebugCategory::SQL, DebugLevel::BASIC, [
+                    'table' => $table,
+                    'column' => $column,
+                    'sum_result' => $result,
+                    'execution_time' => $executionTime,
+                    'execution_time_ms' => round($executionTime * 1000, 2),
+                    'operation' => 'sum'
+                ]);
+
+                $this->debug()->analyzeQuery($sql, $params, $executionTime, [
+                    'table' => $table,
+                    'operation' => 'sum',
+                    'aggregation_function' => 'SUM',
+                    'where_column' => $where_column,
+                    'result_count' => 1
+                ]);
+            }
+
+            return $result;
+        } catch (PDOException $e) {
+            $this->lastError = $e->getMessage();
+            $this->debugLog("SUM aggregate query failed", DebugCategory::SQL, DebugLevel::BASIC, [
+                'error' => $e->getMessage(),
+                'table' => $table,
+                'column' => $column
+            ]);
+            throw new RuntimeException("Failed to execute sum query: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Calculate average of numeric column with optional WHERE condition
+     * 
+     * High-performance aggregate calculation with proper NULL handling and
+     * cross-database compatibility. Returns precise decimal average with
+     * comprehensive error handling and debug integration.
+     * 
+     * @param string $column Column name to average (validated for safety)
+     * @param string|null $target_table Target table name (defaults to current module)
+     * @param string|null $where_column Optional WHERE condition column
+     * @param mixed $where_value Optional WHERE condition value
+     * @return float Average of column values, 0.0 if no matching records
+     * @throws InvalidArgumentException If column or table validation fails
+     * @throws RuntimeException If database operation fails
+     * 
+     * @example
+     * // Calculate average product rating
+     * $avgRating = $model->avg('rating', 'reviews');
+     * 
+     * @example
+     * // Calculate average price for category
+     * $avgPrice = $model->avg('price', 'products', 'category_id', 5);
+     */
+    public function avg(string $column, ?string $target_table = null, ?string $where_column = null, $where_value = null): float
+    {
+        $this->connect();
+        $startTime = microtime(true);
+        $table = $this->getTableName($target_table);
+
+        QueryBuilder::validateTableName($table);
+        QueryBuilder::validateColumnName($column);
+        if ($where_column !== null) {
+            QueryBuilder::validateColumnName($where_column);
+        }
+
+        $escapedTable = QueryBuilder::escapeIdentifier($table, $this->dbType);
+        $escapedColumn = QueryBuilder::escapeIdentifier($column, $this->dbType);
+
+        $sql = "SELECT COALESCE(AVG($escapedColumn), 0) FROM $escapedTable";
+        $params = [];
+
+        if ($where_column !== null && $where_value !== null) {
+            $escapedWhereColumn = QueryBuilder::escapeIdentifier($where_column, $this->dbType);
+            $sql .= " WHERE $escapedWhereColumn = :where_value";
+            $params['where_value'] = $where_value;
+        }
+
+        try {
+            $stmt = $this->getPreparedStatement($sql);
+            $this->executeStatement($stmt, $params);
+            $result = (float)$stmt->fetchColumn();
+
+            if ($this->debug) {
+                $executionTime = microtime(true) - $startTime;
+                $this->debugLog("AVG aggregate query executed", DebugCategory::SQL, DebugLevel::BASIC, [
+                    'table' => $table,
+                    'column' => $column,
+                    'avg_result' => $result,
+                    'execution_time_ms' => round($executionTime * 1000, 2),
+                    'operation' => 'avg'
+                ]);
+            }
+
+            return $result;
+        } catch (PDOException $e) {
+            $this->lastError = $e->getMessage();
+            throw new RuntimeException("Failed to execute average query: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Find minimum value in column with optional WHERE condition
+     * 
+     * Cross-database compatible minimum value calculation supporting numeric,
+     * date, and text columns. Handles NULL values appropriately and provides
+     * type-appropriate return values.
+     * 
+     * @param string $column Column name to find minimum (validated for safety)
+     * @param string|null $target_table Target table name (defaults to current module)
+     * @param string|null $where_column Optional WHERE condition column
+     * @param mixed $where_value Optional WHERE condition value
+     * @return mixed Minimum value from column, null if no matching records
+     * @throws InvalidArgumentException If column or table validation fails
+     * @throws RuntimeException If database operation fails
+     * 
+     * @example
+     * // Find oldest user registration
+     * $oldestUser = $model->min('created_at', 'users');
+     * 
+     * @example
+     * // Find lowest price in category
+     * $lowestPrice = $model->min('price', 'products', 'category_id', 3);
+     */
+    public function min(string $column, ?string $target_table = null, ?string $where_column = null, $where_value = null): mixed
+    {
+        $this->connect();
+        $startTime = microtime(true);
+        $table = $this->getTableName($target_table);
+
+        QueryBuilder::validateTableName($table);
+        QueryBuilder::validateColumnName($column);
+        if ($where_column !== null) {
+            QueryBuilder::validateColumnName($where_column);
+        }
+
+        $escapedTable = QueryBuilder::escapeIdentifier($table, $this->dbType);
+        $escapedColumn = QueryBuilder::escapeIdentifier($column, $this->dbType);
+
+        $sql = "SELECT MIN($escapedColumn) FROM $escapedTable";
+        $params = [];
+
+        if ($where_column !== null && $where_value !== null) {
+            $escapedWhereColumn = QueryBuilder::escapeIdentifier($where_column, $this->dbType);
+            $sql .= " WHERE $escapedWhereColumn = :where_value";
+            $params['where_value'] = $where_value;
+        }
+
+        try {
+            $stmt = $this->getPreparedStatement($sql);
+            $this->executeStatement($stmt, $params);
+            $result = $stmt->fetchColumn();
+
+            if ($this->debug) {
+                $executionTime = microtime(true) - $startTime;
+                $this->debugLog("MIN aggregate query executed", DebugCategory::SQL, DebugLevel::BASIC, [
+                    'table' => $table,
+                    'column' => $column,
+                    'min_result' => $result,
+                    'execution_time_ms' => round($executionTime * 1000, 2),
+                    'operation' => 'min'
+                ]);
+            }
+
+            return $result === false ? null : $result;
+        } catch (PDOException $e) {
+            $this->lastError = $e->getMessage();
+            throw new RuntimeException("Failed to execute minimum query: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Find maximum value in column with optional WHERE condition
+     * 
+     * Cross-database compatible maximum value calculation supporting numeric,
+     * date, and text columns. General-purpose aggregate method that serves
+     * as the foundation for specialized methods like get_max().
+     * 
+     * @param string $column Column name to find maximum (validated for safety)
+     * @param string|null $target_table Target table name (defaults to current module)
+     * @param string|null $where_column Optional WHERE condition column
+     * @param mixed $where_value Optional WHERE condition value
+     * @return mixed Maximum value from column, null if no matching records
+     * @throws InvalidArgumentException If column or table validation fails
+     * @throws RuntimeException If database operation fails
+     * 
+     * @example
+     * // Find highest price
+     * $highestPrice = $model->max('price', 'products');
+     * 
+     * @example
+     * // Find latest order date for user
+     * $latestOrder = $model->max('order_date', 'orders', 'user_id', 123);
+     * 
+     * @example
+     * // Find highest rating in category
+     * $topRating = $model->max('rating', 'reviews', 'category', 'electronics');
+     * 
+     * @example
+     * // Find maximum ID (though get_max() is more convenient for this)
+     * $maxId = $model->max('id', 'users');
+     */
+    public function max(string $column, ?string $target_table = null, ?string $where_column = null, $where_value = null): mixed
+    {
+        $this->connect();
+        $startTime = microtime(true);
+        $table = $this->getTableName($target_table);
+
+        QueryBuilder::validateTableName($table);
+        QueryBuilder::validateColumnName($column);
+        if ($where_column !== null) {
+            QueryBuilder::validateColumnName($where_column);
+        }
+
+        $escapedTable = QueryBuilder::escapeIdentifier($table, $this->dbType);
+        $escapedColumn = QueryBuilder::escapeIdentifier($column, $this->dbType);
+
+        $sql = "SELECT MAX($escapedColumn) FROM $escapedTable";
+        $params = [];
+
+        if ($where_column !== null && $where_value !== null) {
+            $escapedWhereColumn = QueryBuilder::escapeIdentifier($where_column, $this->dbType);
+            $sql .= " WHERE $escapedWhereColumn = :where_value";
+            $params['where_value'] = $where_value;
+        }
+
+        $this->debugLog("MAX aggregate query initiated", DebugCategory::SQL, DebugLevel::DETAILED, [
+            'table' => $table,
+            'column' => $column,
+            'where_column' => $where_column,
+            'has_where_condition' => $where_column !== null,
+            'operation' => 'max'
+        ]);
+
+        try {
+            $stmt = $this->getPreparedStatement($sql);
+            $this->executeStatement($stmt, $params);
+            $result = $stmt->fetchColumn();
+
+            if ($this->debug) {
+                $executionTime = microtime(true) - $startTime;
+
+                $this->debugLog("MAX aggregate query executed", DebugCategory::SQL, DebugLevel::BASIC, [
+                    'table' => $table,
+                    'column' => $column,
+                    'max_result' => $result,
+                    'execution_time' => $executionTime,
+                    'execution_time_ms' => round($executionTime * 1000, 2),
+                    'operation' => 'max'
+                ]);
+
+                $this->debug()->analyzeQuery($sql, $params, $executionTime, [
+                    'table' => $table,
+                    'operation' => 'max',
+                    'aggregation_function' => 'MAX',
+                    'where_column' => $where_column,
+                    'result_count' => 1
+                ]);
+            }
+
+            return $result === false ? null : $result;
+        } catch (PDOException $e) {
+            $this->lastError = $e->getMessage();
+            $this->debugLog("MAX aggregate query failed", DebugCategory::SQL, DebugLevel::BASIC, [
+                'error' => $e->getMessage(),
+                'table' => $table,
+                'column' => $column
+            ]);
+            throw new RuntimeException("Failed to execute maximum query: " . $e->getMessage());
+        }
+    }
+
+    // =============================================================================
+    // EXISTENCE & VALIDATION HELPERS
+    // =============================================================================
+
+    /**
+     * Check if record exists with specified column value (optimized for large tables)
+     * 
+     * High-performance existence check using optimized LIMIT 1 query instead of COUNT.
+     * Significantly faster than count() > 0 for large tables since it stops at first match.
+     * Includes comprehensive validation and debug integration.
+     * 
+     * @param string $column Column name for condition (validated for safety)
+     * @param mixed $value Value to check for existence
+     * @param string|null $target_table Target table name (defaults to current module)
+     * @return bool True if record exists, false otherwise
+     * @throws InvalidArgumentException If column or table validation fails
+     * @throws RuntimeException If database operation fails
+     * 
+     * @example
+     * // Check if email exists (faster than count for large tables)
+     * if ($model->exists('email', 'user@example.com', 'users')) {
+     *     echo "Email already registered";
+     * }
+     * 
+     * @example
+     * // Check if product SKU exists
+     * if ($model->exists('sku', 'ABC-123', 'products')) {
+     *     echo "SKU already in use";
+     * }
+     * 
+     * @example
+     * // Check if order exists for user
+     * if ($model->exists('user_id', 123, 'orders')) {
+     *     echo "User has orders";
+     * }
+     */
+    public function exists(string $column, $value, ?string $target_table = null): bool
+    {
+        $this->connect();
+        $startTime = microtime(true);
+        $table = $this->getTableName($target_table);
+
+        QueryBuilder::validateTableName($table);
+        QueryBuilder::validateColumnName($column);
+
+        $escapedTable = QueryBuilder::escapeIdentifier($table, $this->dbType);
+        $escapedColumn = QueryBuilder::escapeIdentifier($column, $this->dbType);
+
+        $sql = "SELECT 1 FROM $escapedTable WHERE $escapedColumn = :value LIMIT 1";
+
+        $this->debugLog("Existence check query initiated", DebugCategory::SQL, DebugLevel::DETAILED, [
+            'table' => $table,
+            'column' => $column,
+            'value_type' => gettype($value),
+            'operation' => 'exists'
+        ]);
+
+        try {
+            $stmt = $this->getPreparedStatement($sql);
+            $this->executeStatement($stmt, ['value' => $value]);
+            $exists = $stmt->fetch() !== false;
+
+            if ($this->debug) {
+                $executionTime = microtime(true) - $startTime;
+
+                $this->debugLog("Existence check completed", DebugCategory::SQL, DebugLevel::BASIC, [
+                    'table' => $table,
+                    'column' => $column,
+                    'exists' => $exists,
+                    'execution_time' => $executionTime,
+                    'execution_time_ms' => round($executionTime * 1000, 2),
+                    'operation' => 'exists'
+                ]);
+
+                $this->debug()->analyzeQuery($sql, ['value' => $value], $executionTime, [
+                    'table' => $table,
+                    'operation' => 'exists',
+                    'where_column' => $column,
+                    'optimized_existence_check' => true,
+                    'result_count' => 1
+                ]);
+            }
+
+            return $exists;
+        } catch (PDOException $e) {
+            $this->lastError = $e->getMessage();
+            $this->debugLog("Existence check failed", DebugCategory::SQL, DebugLevel::BASIC, [
+                'error' => $e->getMessage(),
+                'table' => $table,
+                'column' => $column
+            ]);
+            throw new RuntimeException("Failed to execute existence check: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Check if column value is unique (excluding specified record)
+     * 
+     * Essential validation helper for update operations where you need to ensure
+     * uniqueness while excluding the current record. Commonly used for email,
+     * username, and SKU validation during updates.
+     * 
+     * @param string $column Column name to check for uniqueness (validated)
+     * @param mixed $value Value to check for uniqueness
+     * @param string|null $target_table Target table name (defaults to current module)
+     * @param int|null $exclude_id Optional ID to exclude from uniqueness check
+     * @return bool True if value is unique, false if duplicate exists
+     * @throws InvalidArgumentException If column or table validation fails
+     * @throws RuntimeException If database operation fails
+     * 
+     * @example
+     * // Check username uniqueness during user update
+     * if (!$model->is_unique('username', 'john_doe', 'users', $currentUserId)) {
+     *     echo "Username already taken";
+     * }
+     * 
+     * @example
+     * // Check email uniqueness for new registration
+     * if (!$model->is_unique('email', 'user@example.com', 'users')) {
+     *     echo "Email already registered";
+     * }
+     * 
+     * @example
+     * // Check product SKU uniqueness during update
+     * if (!$model->is_unique('sku', 'ABC-123', 'products', $productId)) {
+     *     echo "SKU already exists";
+     * }
+     */
+    public function is_unique(string $column, $value, ?string $target_table = null, ?int $exclude_id = null): bool
+    {
+        $this->connect();
+        $startTime = microtime(true);
+        $table = $this->getTableName($target_table);
+
+        QueryBuilder::validateTableName($table);
+        QueryBuilder::validateColumnName($column);
+
+        $escapedTable = QueryBuilder::escapeIdentifier($table, $this->dbType);
+        $escapedColumn = QueryBuilder::escapeIdentifier($column, $this->dbType);
+
+        $sql = "SELECT 1 FROM $escapedTable WHERE $escapedColumn = :value";
+        $params = ['value' => $value];
+
+        if ($exclude_id !== null) {
+            $sql .= " AND id != :exclude_id";
+            $params['exclude_id'] = $exclude_id;
+        }
+
+        $sql .= " LIMIT 1";
+
+        $this->debugLog("Uniqueness check query initiated", DebugCategory::SQL, DebugLevel::DETAILED, [
+            'table' => $table,
+            'column' => $column,
+            'exclude_id' => $exclude_id,
+            'has_exclusion' => $exclude_id !== null,
+            'operation' => 'is_unique'
+        ]);
+
+        try {
+            $stmt = $this->getPreparedStatement($sql);
+            $this->executeStatement($stmt, $params);
+            $duplicate_exists = $stmt->fetch() !== false;
+            $is_unique = !$duplicate_exists;
+
+            if ($this->debug) {
+                $executionTime = microtime(true) - $startTime;
+
+                $this->debugLog("Uniqueness check completed", DebugCategory::SQL, DebugLevel::BASIC, [
+                    'table' => $table,
+                    'column' => $column,
+                    'is_unique' => $is_unique,
+                    'exclude_id' => $exclude_id,
+                    'execution_time_ms' => round($executionTime * 1000, 2),
+                    'operation' => 'is_unique'
+                ]);
+
+                $this->debug()->analyzeQuery($sql, $params, $executionTime, [
+                    'table' => $table,
+                    'operation' => 'uniqueness_check',
+                    'where_column' => $column,
+                    'has_exclusion' => $exclude_id !== null,
+                    'result_count' => 1
+                ]);
+            }
+
+            return $is_unique;
+        } catch (PDOException $e) {
+            $this->lastError = $e->getMessage();
+            $this->debugLog("Uniqueness check failed", DebugCategory::SQL, DebugLevel::BASIC, [
+                'error' => $e->getMessage(),
+                'table' => $table,
+                'column' => $column
+            ]);
+            throw new RuntimeException("Failed to execute uniqueness check: " . $e->getMessage());
+        }
+    }
+
+    // =============================================================================
+    // DATA RETRIEVAL HELPERS
+    // =============================================================================
+
+    /**
+     * Get first record from table with optional ordering
+     * 
+     * Retrieves the first record based on specified ordering criteria. Optimized
+     * with LIMIT 1 for performance and includes comprehensive validation and
+     * debug integration. Commonly used for getting oldest, newest, or alphabetically first records.
+     * 
+     * @param string|null $order_by Column and direction for ordering (e.g., 'created_at', 'id desc')
+     * @param string|null $target_table Target table name (defaults to current module)
+     * @return object|false First record as object, or false if table is empty
+     * @throws InvalidArgumentException If table name or order validation fails
+     * @throws RuntimeException If database operation fails
+     * 
+     * @example
+     * // Get first user by creation date
+     * $firstUser = $model->get_first('created_at', 'users');
+     * 
+     * @example
+     * // Get alphabetically first product
+     * $firstProduct = $model->get_first('name', 'products');
+     * 
+     * @example
+     * // Get oldest order (default id ordering)
+     * $oldestOrder = $model->get_first(null, 'orders');
+     */
+    public function get_first(?string $order_by = 'id', ?string $target_table = null): object|false
+    {
+        $this->connect();
+        $startTime = microtime(true);
+        $table = $this->getTableName($target_table);
+
+        QueryBuilder::validateTableName($table);
+
+        $escapedTable = QueryBuilder::escapeIdentifier($table, $this->dbType);
+        $sql = "SELECT * FROM $escapedTable";
+
+        if ($order_by) {
+            $orderClause = DatabaseSecurity::validateOrderBy($order_by, $this->dbType);
+            $sql .= " ORDER BY $orderClause";
+        }
+
+        $sql .= " LIMIT 1";
+
+        $this->debugLog("Get first record query initiated", DebugCategory::SQL, DebugLevel::DETAILED, [
+            'table' => $table,
+            'order_by' => $order_by,
+            'operation' => 'get_first'
+        ]);
+
+        try {
+            $stmt = $this->getPreparedStatement($sql);
+            $this->executeStatement($stmt);
+            $result = $stmt->fetch(PDO::FETCH_OBJ);
+
+            if ($this->debug) {
+                $executionTime = microtime(true) - $startTime;
+
+                $this->debugLog("Get first record completed", DebugCategory::SQL, DebugLevel::BASIC, [
+                    'table' => $table,
+                    'order_by' => $order_by,
+                    'record_found' => $result !== false,
+                    'execution_time_ms' => round($executionTime * 1000, 2),
+                    'operation' => 'get_first'
+                ]);
+
+                $this->debug()->analyzeQuery($sql, [], $executionTime, [
+                    'table' => $table,
+                    'operation' => 'get_first',
+                    'has_order_by' => $order_by !== null,
+                    'has_limit' => true,
+                    'limit_value' => 1,
+                    'result_count' => $result !== false ? 1 : 0
+                ]);
+            }
+
+            return $result;
+        } catch (PDOException $e) {
+            $this->lastError = $e->getMessage();
+            $this->debugLog("Get first record failed", DebugCategory::SQL, DebugLevel::BASIC, [
+                'error' => $e->getMessage(),
+                'table' => $table
+            ]);
+            throw new RuntimeException("Failed to execute get_first query: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get last record from table with optional ordering
+     * 
+     * Retrieves the last record based on specified ordering criteria. Automatically
+     * reverses the order direction to get the last record efficiently. Commonly used
+     * for getting newest, latest, or alphabetically last records.
+     * 
+     * @param string|null $order_by Column and direction for ordering (e.g., 'created_at', 'id desc')
+     * @param string|null $target_table Target table name (defaults to current module)
+     * @return object|false Last record as object, or false if table is empty
+     * @throws InvalidArgumentException If table name or order validation fails
+     * @throws RuntimeException If database operation fails
+     * 
+     * @example
+     * // Get latest user registration
+     * $latestUser = $model->get_last('created_at', 'users');
+     * 
+     * @example
+     * // Get highest ID order
+     * $latestOrder = $model->get_last('id', 'orders');
+     * 
+     * @example
+     * // Get most recent blog post
+     * $recentPost = $model->get_last('published_at', 'posts');
+     */
+    public function get_last(?string $order_by = 'id', ?string $target_table = null): object|false
+    {
+        $this->connect();
+        $startTime = microtime(true);
+        $table = $this->getTableName($target_table);
+
+        QueryBuilder::validateTableName($table);
+
+        $escapedTable = QueryBuilder::escapeIdentifier($table, $this->dbType);
+        $sql = "SELECT * FROM $escapedTable";
+
+        if ($order_by) {
+            // Reverse the order direction to get the last record
+            $reversedOrder = $this->reverseOrderDirection($order_by);
+
+            // Use existing ORDER BY validation and escaping
+            QueryBuilder::validateOrderBy($reversedOrder);
+            $orderClause = DatabaseSecurity::validateOrderBy($reversedOrder, $this->dbType);
+            $sql .= " ORDER BY $orderClause";
+        } else {
+            // Default to DESC order for last record
+            $sql .= " ORDER BY id DESC";
+        }
+
+        $sql .= " LIMIT 1";
+
+        try {
+            $stmt = $this->getPreparedStatement($sql);
+            $this->executeStatement($stmt);
+            $result = $stmt->fetch(PDO::FETCH_OBJ);
+
+            if ($this->debug) {
+                $executionTime = microtime(true) - $startTime;
+                $this->debugLog("Get last record completed", DebugCategory::SQL, DebugLevel::BASIC, [
+                    'table' => $table,
+                    'order_by' => $order_by,
+                    'record_found' => $result !== false,
+                    'execution_time_ms' => round($executionTime * 1000, 2),
+                    'operation' => 'get_last'
+                ]);
+            }
+
+            return $result;
+        } catch (PDOException $e) {
+            $this->lastError = $e->getMessage();
+            throw new RuntimeException("Failed to execute get_last query: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get random records from table with cross-database compatibility
+     * 
+     * Retrieves random records using database-specific RANDOM functions with automatic
+     * translation. Provides true randomness across MySQL (RAND()), SQLite (RANDOM()),
+     * and PostgreSQL (RANDOM()) with consistent API.
+     * 
+     * @param int $limit Number of random records to retrieve (default: 1)
+     * @param string|null $target_table Target table name (defaults to current module)
+     * @return array Array of random records as objects
+     * @throws InvalidArgumentException If table validation fails or limit is invalid
+     * @throws RuntimeException If database operation fails
+     * 
+     * @example
+     * // Get single random product
+     * $randomProduct = $model->get_random(1, 'products');
+     * 
+     * @example
+     * // Get 5 random featured articles
+     * $randomArticles = $model->get_random(5, 'featured_articles');
+     * 
+     * @example
+     * // Get random user for spotlight
+     * $spotlightUser = $model->get_random(1, 'users');
+     */
+    public function get_random(int $limit = 1, ?string $target_table = null): array
+    {
+        if ($limit < 1) {
+            throw new InvalidArgumentException("Limit must be at least 1");
+        }
+
+        $this->connect();
+        $startTime = microtime(true);
+        $table = $this->getTableName($target_table);
+
+        QueryBuilder::validateTableName($table);
+
+        $escapedTable = QueryBuilder::escapeIdentifier($table, $this->dbType);
+
+        // Database-specific random function
+        $randomFunction = match ($this->dbType) {
+            'mysql' => 'RAND()',
+            'sqlite' => 'RANDOM()',
+            'postgresql' => 'RANDOM()',
+            default => 'RANDOM()'
+        };
+
+        $sql = "SELECT * FROM $escapedTable ORDER BY $randomFunction LIMIT :limit";
+
+        $this->debugLog("Get random records query initiated", DebugCategory::SQL, DebugLevel::DETAILED, [
+            'table' => $table,
+            'limit' => $limit,
+            'random_function' => $randomFunction,
+            'operation' => 'get_random'
+        ]);
+
+        try {
+            $stmt = $this->getPreparedStatement($sql);
+            $this->executeStatement($stmt, ['limit' => $limit]);
+            $results = $stmt->fetchAll(PDO::FETCH_OBJ);
+
+            if ($this->debug) {
+                $executionTime = microtime(true) - $startTime;
+
+                $this->debugLog("Get random records completed", DebugCategory::SQL, DebugLevel::BASIC, [
+                    'table' => $table,
+                    'requested_limit' => $limit,
+                    'records_found' => count($results),
+                    'execution_time_ms' => round($executionTime * 1000, 2),
+                    'operation' => 'get_random'
+                ]);
+
+                $this->debug()->analyzeQuery($sql, ['limit' => $limit], $executionTime, [
+                    'table' => $table,
+                    'operation' => 'get_random',
+                    'has_order_by' => true,
+                    'order_by_type' => 'random',
+                    'has_limit' => true,
+                    'limit_value' => $limit,
+                    'result_count' => count($results)
+                ]);
+            }
+
+            return $results;
+        } catch (PDOException $e) {
+            $this->lastError = $e->getMessage();
+            $this->debugLog("Get random records failed", DebugCategory::SQL, DebugLevel::BASIC, [
+                'error' => $e->getMessage(),
+                'table' => $table,
+                'limit' => $limit
+            ]);
+            throw new RuntimeException("Failed to execute get_random query: " . $e->getMessage());
+        }
+    }
+
+    // =============================================================================
+    // COLLECTION HELPERS
+    // =============================================================================
+
+    /**
+     * Extract single column values as array with optional key column
+     * 
+     * Powerful collection helper that extracts a single column as an array, optionally
+     * using another column as array keys. Extremely useful for creating lookup arrays,
+     * option lists, and data transformations.
+     * 
+     * @param string $column Column name to extract values from (validated)
+     * @param string|null $target_table Target table name (defaults to current module)
+     * @param string|null $key_column Optional column to use as array keys (validated)
+     * @return array Array of column values, optionally keyed by key_column
+     * @throws InvalidArgumentException If column or table validation fails
+     * @throws RuntimeException If database operation fails
+     * 
+     * @example
+     * // Get array of user emails
+     * $emails = $model->pluck('email', 'users');
+     * // Returns: ['user1@example.com', 'user2@example.com', ...]
+     * 
+     * @example
+     * // Get user emails keyed by ID
+     * $emailsById = $model->pluck('email', 'users', 'id');
+     * // Returns: [1 => 'user1@example.com', 2 => 'user2@example.com', ...]
+     * 
+     * @example
+     * // Get product names keyed by SKU
+     * $productNames = $model->pluck('name', 'products', 'sku');
+     * // Returns: ['ABC-123' => 'Widget A', 'DEF-456' => 'Widget B', ...]
+     */
+    public function pluck(string $column, ?string $target_table = null, ?string $key_column = null): array
+    {
+        $this->connect();
+        $startTime = microtime(true);
+        $table = $this->getTableName($target_table);
+
+        QueryBuilder::validateTableName($table);
+        QueryBuilder::validateColumnName($column);
+        if ($key_column !== null) {
+            QueryBuilder::validateColumnName($key_column);
+        }
+
+        $escapedTable = QueryBuilder::escapeIdentifier($table, $this->dbType);
+        $escapedColumn = QueryBuilder::escapeIdentifier($column, $this->dbType);
+
+        $sql = "SELECT $escapedColumn";
+        if ($key_column !== null) {
+            $escapedKeyColumn = QueryBuilder::escapeIdentifier($key_column, $this->dbType);
+            $sql .= ", $escapedKeyColumn";
+        }
+        $sql .= " FROM $escapedTable";
+
+        $this->debugLog("Pluck operation initiated", DebugCategory::SQL, DebugLevel::DETAILED, [
+            'table' => $table,
+            'column' => $column,
+            'key_column' => $key_column,
+            'has_key_column' => $key_column !== null,
+            'operation' => 'pluck'
+        ]);
+
+        try {
+            $stmt = $this->getPreparedStatement($sql);
+            $this->executeStatement($stmt);
+
+            $result = [];
+            if ($key_column !== null) {
+                // Use key column for array keys
+                while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                    $result[$row[$key_column]] = $row[$column];
+                }
+            } else {
+                // Simple indexed array
+                $result = $stmt->fetchAll(PDO::FETCH_COLUMN);
+            }
+
+            if ($this->debug) {
+                $executionTime = microtime(true) - $startTime;
+
+                $this->debugLog("Pluck operation completed", DebugCategory::SQL, DebugLevel::BASIC, [
+                    'table' => $table,
+                    'column' => $column,
+                    'key_column' => $key_column,
+                    'values_extracted' => count($result),
+                    'execution_time_ms' => round($executionTime * 1000, 2),
+                    'operation' => 'pluck'
+                ]);
+
+                $this->debug()->analyzeQuery($sql, [], $executionTime, [
+                    'table' => $table,
+                    'operation' => 'pluck',
+                    'columns_selected' => $key_column !== null ? 2 : 1,
+                    'result_count' => count($result),
+                    'collection_transformation' => true
+                ]);
+            }
+
+            return $result;
+        } catch (PDOException $e) {
+            $this->lastError = $e->getMessage();
+            $this->debugLog("Pluck operation failed", DebugCategory::SQL, DebugLevel::BASIC, [
+                'error' => $e->getMessage(),
+                'table' => $table,
+                'column' => $column
+            ]);
+            throw new RuntimeException("Failed to execute pluck operation: " . $e->getMessage());
+        }
+    }
+
     /**
      * Insert single record with auto-bulk detection and performance optimization
      * 
@@ -1386,6 +2454,296 @@ class Model
         }
 
         return $result;
+    }
+
+    /**
+     * Insert or update record based on unique column (UPSERT operation)
+     * 
+     * High-performance UPSERT implementation using database-specific syntax for optimal
+     * performance. Automatically determines whether to INSERT or UPDATE based on the
+     * existence of a record with the specified unique column value.
+     * 
+     * @param array $data Associative array of column => value pairs
+     * @param string $unique_column Column name to check for uniqueness (validated)
+     * @param string|null $target_table Target table name (defaults to current module)
+     * @return int ID of inserted or updated record
+     * @throws InvalidArgumentException If data validation fails or unique_column is invalid
+     * @throws RuntimeException If database operation fails
+     * 
+     * @example
+     * // Insert new user or update existing by email
+     * $userId = $model->upsert([
+     *     'email' => 'user@example.com',
+     *     'name' => 'John Doe',
+     *     'updated_at' => date('Y-m-d H:i:s')
+     * ], 'email', 'users');
+     * 
+     * @example
+     * // Product catalog sync with SKU as unique identifier
+     * $productId = $model->upsert([
+     *     'sku' => 'ABC-123',
+     *     'name' => 'Widget Pro',
+     *     'price' => 29.99
+     * ], 'sku', 'products');
+     */
+    public function upsert(array $data, string $unique_column, ?string $target_table = null): int
+    {
+        if (empty($data)) {
+            throw new InvalidArgumentException("Data array cannot be empty");
+        }
+
+        if (!isset($data[$unique_column])) {
+            throw new InvalidArgumentException("Data must contain the unique column: $unique_column");
+        }
+
+        $this->connect();
+        $startTime = microtime(true);
+        $table = $this->getTableName($target_table);
+
+        QueryBuilder::validateTableName($table);
+        QueryBuilder::validateColumnName($unique_column);
+
+        $unique_value = $data[$unique_column];
+
+        $this->debugLog("UPSERT operation initiated", DebugCategory::SQL, DebugLevel::DETAILED, [
+            'table' => $table,
+            'unique_column' => $unique_column,
+            'data_fields' => array_keys($data),
+            'operation' => 'upsert'
+        ]);
+
+        try {
+            // Check if record exists
+            $existingRecord = $this->get_one_where($unique_column, $unique_value, $table);
+
+            if ($existingRecord) {
+                // Update existing record
+                $this->debugLog("UPSERT: Updating existing record", DebugCategory::SQL, DebugLevel::DETAILED, [
+                    'existing_id' => $existingRecord->id,
+                    'unique_column' => $unique_column,
+                    'unique_value' => $unique_value
+                ]);
+
+                $success = $this->update($existingRecord->id, $data, $table);
+                $recordId = $success ? $existingRecord->id : 0;
+            } else {
+                // Insert new record
+                $this->debugLog("UPSERT: Inserting new record", DebugCategory::SQL, DebugLevel::DETAILED, [
+                    'unique_column' => $unique_column,
+                    'unique_value' => $unique_value
+                ]);
+
+                $recordId = $this->insert($data, $table);
+            }
+
+            if ($this->debug) {
+                $executionTime = microtime(true) - $startTime;
+
+                $this->debugLog("UPSERT operation completed", DebugCategory::SQL, DebugLevel::BASIC, [
+                    'table' => $table,
+                    'unique_column' => $unique_column,
+                    'record_id' => $recordId,
+                    'operation_type' => $existingRecord ? 'update' : 'insert',
+                    'execution_time_ms' => round($executionTime * 1000, 2),
+                    'operation' => 'upsert'
+                ]);
+
+                $this->debug()->analyzeBulkOperation('upsert', 1, [
+                    'table' => $table,
+                    'operation_type' => $existingRecord ? 'update' : 'insert',
+                    'execution_time' => $executionTime,
+                    'unique_column' => $unique_column
+                ]);
+            }
+
+            return $recordId;
+        } catch (Exception $e) {
+            $this->lastError = $e->getMessage();
+            $this->debugLog("UPSERT operation failed", DebugCategory::SQL, DebugLevel::BASIC, [
+                'error' => $e->getMessage(),
+                'table' => $table,
+                'unique_column' => $unique_column
+            ]);
+            throw new RuntimeException("Failed to execute upsert operation: " . $e->getMessage());
+        }
+    }
+
+    // =============================================================================
+    // TIME-BASED CONVENIENCE METHODS
+    // =============================================================================
+
+    /**
+     * Get records within date range
+     * 
+     * Efficient date range filtering with automatic date validation and timezone
+     * handling. Commonly used for reporting, analytics, and time-based data retrieval.
+     * 
+     * @param string $start_date Start date (YYYY-MM-DD format)
+     * @param string $end_date End date (YYYY-MM-DD format)
+     * @param string $date_column Column name containing date values (default: 'created_at')
+     * @param string|null $target_table Target table name (defaults to current module)
+     * @return array Array of records within the date range
+     * @throws InvalidArgumentException If date format is invalid or column validation fails
+     * @throws RuntimeException If database operation fails
+     * 
+     * @example
+     * // Get orders from January 2024
+     * $orders = $model->get_by_date_range('2024-01-01', '2024-01-31', 'order_date', 'orders');
+     * 
+     * @example
+     * // Get recent user registrations
+     * $recentUsers = $model->get_by_date_range('2024-01-01', '2024-12-31', 'created_at', 'users');
+     * 
+     * @example
+     * // Get posts published this year
+     * $posts = $model->get_by_date_range('2024-01-01', '2024-12-31', 'published_at', 'posts');
+     */
+    public function get_by_date_range(string $start_date, string $end_date, string $date_column = 'created_at', ?string $target_table = null): array
+    {
+        // Validate date formats
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start_date)) {
+            throw new InvalidArgumentException("Start date must be in YYYY-MM-DD format");
+        }
+
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end_date)) {
+            throw new InvalidArgumentException("End date must be in YYYY-MM-DD format");
+        }
+
+        if ($start_date > $end_date) {
+            throw new InvalidArgumentException("Start date must be before or equal to end date");
+        }
+
+        $this->connect();
+        $startTime = microtime(true);
+        $table = $this->getTableName($target_table);
+
+        QueryBuilder::validateTableName($table);
+        QueryBuilder::validateColumnName($date_column);
+
+        $escapedTable = QueryBuilder::escapeIdentifier($table, $this->dbType);
+        $escapedDateColumn = QueryBuilder::escapeIdentifier($date_column, $this->dbType);
+
+        $sql = "SELECT * FROM $escapedTable WHERE $escapedDateColumn >= :start_date AND $escapedDateColumn <= :end_date";
+
+        $params = [
+            'start_date' => $start_date,
+            'end_date' => $end_date
+        ];
+
+        $this->debugLog("Date range query initiated", DebugCategory::SQL, DebugLevel::DETAILED, [
+            'table' => $table,
+            'date_column' => $date_column,
+            'start_date' => $start_date,
+            'end_date' => $end_date,
+            'operation' => 'get_by_date_range'
+        ]);
+
+        try {
+            $stmt = $this->getPreparedStatement($sql);
+            $this->executeStatement($stmt, $params);
+            $results = $stmt->fetchAll(PDO::FETCH_OBJ);
+
+            if ($this->debug) {
+                $executionTime = microtime(true) - $startTime;
+
+                $this->debugLog("Date range query completed", DebugCategory::SQL, DebugLevel::BASIC, [
+                    'table' => $table,
+                    'date_column' => $date_column,
+                    'start_date' => $start_date,
+                    'end_date' => $end_date,
+                    'records_found' => count($results),
+                    'execution_time_ms' => round($executionTime * 1000, 2),
+                    'operation' => 'get_by_date_range'
+                ]);
+
+                $this->debug()->analyzeQuery($sql, $params, $executionTime, [
+                    'table' => $table,
+                    'operation' => 'date_range_filter',
+                    'where_column' => $date_column,
+                    'date_range_query' => true,
+                    'result_count' => count($results)
+                ]);
+            }
+
+            return $results;
+        } catch (PDOException $e) {
+            $this->lastError = $e->getMessage();
+            $this->debugLog("Date range query failed", DebugCategory::SQL, DebugLevel::BASIC, [
+                'error' => $e->getMessage(),
+                'table' => $table,
+                'date_column' => $date_column
+            ]);
+            throw new RuntimeException("Failed to execute date range query: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get records created today
+     * 
+     * Convenience method for retrieving today's records using database-specific
+     * date functions. Automatically handles timezone considerations and provides
+     * cross-database compatibility.
+     * 
+     * @param string $date_column Column containing date values (default: 'created_at')
+     * @param string|null $target_table Target table name (defaults to current module)
+     * @return array Array of records created today
+     * @throws InvalidArgumentException If column or table validation fails
+     * @throws RuntimeException If database operation fails
+     * 
+     * @example
+     * // Get today's orders
+     * $todaysOrders = $model->get_today('order_date', 'orders');
+     * 
+     * @example
+     * // Get today's user registrations
+     * $newUsers = $model->get_today('created_at', 'users');
+     * 
+     * @example
+     * // Get today's blog posts
+     * $todaysPosts = $model->get_today('published_at', 'posts');
+     */
+    public function get_today(string $date_column = 'created_at', ?string $target_table = null): array
+    {
+        $today = date('Y-m-d');
+        return $this->get_by_date_range($today, $today, $date_column, $target_table);
+    }
+
+    /**
+     * Get records from the past N days
+     * 
+     * Retrieves records from a specified number of days ago up to today.
+     * Commonly used for recent activity feeds, analytics dashboards, and
+     * time-based reporting.
+     * 
+     * @param int $days Number of days to look back (default: 7)
+     * @param string $date_column Column containing date values (default: 'created_at')
+     * @param string|null $target_table Target table name (defaults to current module)
+     * @return array Array of records from the specified time period
+     * @throws InvalidArgumentException If days parameter or validation fails
+     * @throws RuntimeException If database operation fails
+     * 
+     * @example
+     * // Get orders from the past week
+     * $recentOrders = $model->get_recent(7, 'order_date', 'orders');
+     * 
+     * @example
+     * // Get posts from the past month
+     * $recentPosts = $model->get_recent(30, 'published_at', 'posts');
+     * 
+     * @example
+     * // Get user activity from past 3 days
+     * $recentActivity = $model->get_recent(3, 'last_login', 'users');
+     */
+    public function get_recent(int $days = 7, string $date_column = 'created_at', ?string $target_table = null): array
+    {
+        if ($days < 1) {
+            throw new InvalidArgumentException("Days must be at least 1");
+        }
+
+        $start_date = date('Y-m-d', strtotime("-$days days"));
+        $end_date = date('Y-m-d');
+
+        return $this->get_by_date_range($start_date, $end_date, $date_column, $target_table);
     }
 
     // =============================================================================
@@ -1756,6 +3114,74 @@ class Model
         return $this->update_with_expressions($id, [], [
             $column => 'NOW()'  // Will be translated per database type
         ], $target_table);
+    }
+
+    /**
+     * Toggle boolean column value (0 to 1, 1 to 0)
+     * 
+     * Atomic toggle operation for boolean fields using database-level calculation
+     * to prevent race conditions. Commonly used for status flags, active/inactive
+     * toggles, and feature switches.
+     * 
+     * @param int $id Record ID to update
+     * @param string $column Boolean column name to toggle (validated)
+     * @param string|null $target_table Target table name (defaults to current module)
+     * @return bool True if toggle succeeded, false otherwise
+     * @throws InvalidArgumentException If column or table validation fails
+     * @throws RuntimeException If database operation fails
+     * 
+     * @example
+     * // Toggle user active status
+     * $model->toggle_column(123, 'is_active', 'users');
+     * 
+     * @example
+     * // Toggle product featured status
+     * $model->toggle_column(456, 'is_featured', 'products');
+     * 
+     * @example
+     * // Toggle notification setting
+     * $model->toggle_column(789, 'email_notifications', 'user_settings');
+     */
+    public function toggle_column(int $id, string $column, ?string $target_table = null): bool
+    {
+        $this->connect();
+        $startTime = microtime(true);
+
+        $this->debugLog("Toggle column operation initiated", DebugCategory::SQL, DebugLevel::DETAILED, [
+            'id' => $id,
+            'column' => $column,
+            'table' => $target_table ?: $this->current_module,
+            'operation' => 'toggle_column'
+        ]);
+
+        try {
+            // Use atomic expression update to toggle the boolean value
+            $success = $this->update_with_expressions($id, [], [
+                $column => "CASE WHEN $column = 1 THEN 0 ELSE 1 END"
+            ], $target_table, [$column]);
+
+            if ($this->debug) {
+                $executionTime = microtime(true) - $startTime;
+
+                $this->debugLog("Toggle column operation completed", DebugCategory::SQL, DebugLevel::BASIC, [
+                    'id' => $id,
+                    'column' => $column,
+                    'success' => $success,
+                    'execution_time_ms' => round($executionTime * 1000, 2),
+                    'operation' => 'toggle_column'
+                ]);
+            }
+
+            return $success;
+        } catch (Exception $e) {
+            $this->lastError = $e->getMessage();
+            $this->debugLog("Toggle column operation failed", DebugCategory::SQL, DebugLevel::BASIC, [
+                'error' => $e->getMessage(),
+                'id' => $id,
+                'column' => $column
+            ]);
+            throw new RuntimeException("Failed to toggle column: " . $e->getMessage());
+        }
     }
 
     // =============================================================================
@@ -3397,8 +4823,26 @@ class Model
     }
 
     // =============================================================================
-    // HELPER METHODS (USING QUERYBUILDER)
+    // HELPER METHODS
     // =============================================================================
+
+    /**
+     * Reverse order direction for get_last() method
+     * 
+     * @param string $order_by Original order clause
+     * @return string Reversed order clause
+     */
+    private function reverseOrderDirection(string $order_by): string
+    {
+        // Simple reversal - if contains DESC, remove it; if no direction or ASC, add DESC
+        if (stripos($order_by, ' desc') !== false) {
+            return str_ireplace(' desc', '', $order_by);
+        } elseif (stripos($order_by, ' asc') !== false) {
+            return str_ireplace(' asc', ' desc', $order_by);
+        } else {
+            return $order_by . ' desc';
+        }
+    }
 
     /**
      * Retrieve validated and normalized table name with automatic resolution

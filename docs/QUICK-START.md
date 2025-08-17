@@ -550,8 +550,8 @@ Now that you've seen TronBridge in action, explore these advanced features:
 
 ### **💡 Get Involved**
 - **[Contributing Guide](CONTRIBUTING.md)** - Help improve TronBridge
-- **[GitHub Discussions](https://github.com/tronbridge/tronbridge/discussions)** - Ask questions and share experiences
-- **[GitHub Issues](https://github.com/tronbridge/tronbridge/issues)** - Report bugs or request features
+- **[GitHub Discussions](https://github.com/monkeysdocode/TronBridge/discussions)** - Ask questions and share experiences
+- **[GitHub Issues](https://github.com/monkeysdocode/TronBridge/issues)** - Report bugs or request features
 
 ---
 

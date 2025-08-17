@@ -30,14 +30,14 @@ The simplest way to install TronBridge is by downloading the ZIP file and copyin
 ### **Step 1: Download TronBridge**
 
 **Option A: Download ZIP from GitHub**
-1. Go to the [TronBridge GitHub repository](https://github.com/tronbridge/tronbridge)
+1. Go to the [TronBridge GitHub repository](https://github.com/monkeysdocode/TronBridge)
 2. Click the green **"Code"** button
 3. Select **"Download ZIP"**
 4. Extract the ZIP file to a temporary location
 
 **Option B: Clone with Git**
 ```bash
-git clone https://github.com/tronbridge/tronbridge.git
+git clone https://github.com/monkeysdocode/TronBridge.git
 cd tronbridge
 ```
 

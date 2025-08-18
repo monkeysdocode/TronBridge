@@ -799,17 +799,17 @@ class BackupCLI
     {
         $this->info("Database Capabilities:");
         $this->info("• Database Type: " . $capabilities['database_type']);
-        $this->info("• Shell Access (proc_open): " . ($capabilities['proc_open'] ? '✅' : '❌'));
+        $this->info("• Shell Access (proc_open): " . ($capabilities['capabilities']['proc_open'] ? '✅' : '❌'));
         
         if ($capabilities['database_type'] === 'sqlite') {
-            $this->info("• SQLite3 Extension: " . ($capabilities['sqlite3_extension'] ? '✅' : '❌'));
+            $this->info("• SQLite3 Extension: " . ($capabilities['capabilities']['sqlite3_extension'] ? '✅' : '❌'));
         } elseif ($capabilities['database_type'] === 'mysql') {
-            $this->info("• mysqldump Available: " . ($capabilities['mysqldump_available'] ? '✅' : '❌'));
+            $this->info("• mysqldump Available: " . ($capabilities['capabilities']['mysqldump_available'] ? '✅' : '❌'));
         } elseif ($capabilities['database_type'] === 'postgresql') {
-            $this->info("• pg_dump Available: " . ($capabilities['pg_dump_available'] ? '✅' : '❌'));
+            $this->info("• pg_dump Available: " . ($capabilities['capabilities']['pg_dump_available'] ? '✅' : '❌'));
         }
         
-        $this->info("• Gzip Support: " . ($capabilities['gzip_support'] ? '✅' : '❌'));
+        $this->info("• Gzip Support: " . ($capabilities['capabilities']['gzip_available'] ? '✅' : '❌'));
         $this->info("");
     }
 

@@ -231,7 +231,7 @@ your-trongate-app/
     │   ├── migration/                   # Migration tools
     │   ├── schema/                      # Schema translation
     │   └── traits/                      # Shared traits
-    └── scripts/                         # 🔧 Optional: CLI tools
+    ├── scripts/                         # 🔧 Optional: CLI tools
     │   ├── backup-cli.php
     │   ├── migration-cli.php
     │   └── sql-dump-translator.php

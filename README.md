@@ -1,7 +1,7 @@
 # TronBridge
 > Cross-database Trongate applications, simplified
 
-TronBridge extends Trongate with comprehensive multi-database support, enabling you to use **SQLite**, **PostgreSQL**, or **MySQL/MariaDB** with the same familiar Trongate Model API. Finally, break free from MySQL-only constraints and build truly flexible database applications.
+TronBridge extends [Trongate](https://github.com/trongate/trongate-framework) with comprehensive multi-database support, enabling you to use **SQLite**, **PostgreSQL**, or **MySQL/MariaDB** with the same familiar Trongate Model API. B reak free from MySQL-only constraints and build truly flexible database applications.
 
 ## 🌉 **What TronBridge Bridges**
 

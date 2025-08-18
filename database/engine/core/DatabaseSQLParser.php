@@ -1,24 +1,30 @@
 <?php
 
 /**
- * Enhanced Database SQL Parser - Robust SQL Statement Parsing with Fixed PostgreSQL Support
- * 
- * A sophisticated SQL parser designed to handle complex SQL dumps, backup files,
- * and schema files across multiple database types. This version properly handles
- * PostgreSQL-specific syntax without over-correcting valid statements.
- * 
- * Key PostgreSQL Features Properly Handled:
- * - Type casting with :: syntax (::jsonb, ::text[], ::integer)
- * - Array literals with proper quoting ('{"item1", "item2"}')
- * - JSONB data with complex nested structures
- * - Dollar-quoted strings ($tag$...$tag$) for functions and triggers
- * - Double-quoted identifiers with proper escaping
- * - Complex constraint definitions spanning multiple lines
- * - PostgreSQL-specific SET statements and configuration
- * 
- * @package Database\Classes
- * @author Enhanced Model System
- * @version 1.2.0 - Fixed PostgreSQL Support
+ * A dialect-aware SQL parser for splitting complex SQL files into individual statements.
+ *
+ * This class provides a robust, state-machine-based parser designed to accurately
+ * split large SQL dumps, schema files, and backup scripts into an array of
+ * executable statements. It is built to handle the nuances of different SQL
+ * dialects, including MySQL, PostgreSQL, and SQLite.
+ *
+ * Key Features:
+ * - Stateful Parsing: Correctly handles multi-line statements, various quoting
+ *   styles (single, double, backticks), and nested SQL structures.
+ * - Dialect-Specific Logic:
+ *   - PostgreSQL: Natively handles dollar-quoted strings ($tag$...$tag$),
+ *     type casting (::), and complex array syntax.
+ *   - MySQL: Correctly processes `DELIMITER` commands and backticked identifiers.
+ * - Complex Object Support: Intelligently parses multi-statement triggers,
+ *   functions, and procedures by tracking `BEGIN...END` block depth.
+ * - Configurable Behavior: Parsing options can be customized, such as
+ *   preserving comments or handling specific dialect features.
+ * - Utility Methods: Includes functionality for parsing statistics, basic
+ *   statement validation, and identifying statement types (e.g., DDL, DML).
+ *
+ * @package Database\Core
+ * @author The TronBridge Project
+ * @version 1.2.0
  */
 class DatabaseSQLParser
 {
@@ -169,7 +175,19 @@ class DatabaseSQLParser
     }
 
     /**
-     * Handle normal parsing state
+     * Processes the current character when the parser is in a normal, non-escaped state.
+     *
+     * This method acts as the primary router for the state machine. It examines the
+     * current character to decide whether to transition into a new state, such as
+     * inside a quoted string, a comment, a dollar-quoted string (PostgreSQL),
+     * or a special `DELIMITER` command (MySQL).
+     *
+     * @param string $char              The single character being processed.
+     * @param string $nextChar          The next character in the sequence for lookahead checks (e.g., for '/*' or '--').
+     * @param string &$currentStatement The accumulating SQL statement, passed by reference.
+     * @param int    $state             The current state of the parser (will be STATE_NORMAL).
+     * @param int    $position          The current character's index in the full SQL string.
+     * @return int The new parser state, which may be the same or a new state constant.
      */
     private function handleNormalState(string $char, string $nextChar, string &$currentStatement, int $state, int $position): int
     {
@@ -222,7 +240,20 @@ class DatabaseSQLParser
         return $state;
     }
 
-
+    /**
+     * Tracks the nesting level of BEGIN/END blocks within triggers, functions, or procedures.
+     *
+     * This method identifies the start of complex, multi-statement definitions 
+     * (e.g., CREATE TRIGGER) and then maintains a depth counter for any nested 
+     * BEGIN/END blocks. This is crucial for ensuring that semicolons (;) inside these 
+     * definitions are correctly treated as part of the block's body and do not 
+     * prematurely terminate the overall statement parsing.
+     *
+     * @param string $char             The current character being processed from the SQL content.
+     * @param string $currentStatement The SQL statement that has been built up to the current position.
+     * @param int    $position         The current character's index in the full SQL string.
+     * @return void
+     */
     private function handleBeginEndBlocks(string $char, string $currentStatement, int $position): void
     {
         $upperStatement = strtoupper($currentStatement . $char);
@@ -273,6 +304,14 @@ class DatabaseSQLParser
         }
     }
 
+    /**
+     * Resets the state flags used for tracking complex BEGIN/END blocks.
+     *
+     * This is called after a statement has been fully parsed to ensure the
+     * state is clean for the next statement.
+     *
+     * @return void
+     */
     private function resetParserState(): void
     {
         $this->beginEndDepth = 0;
@@ -282,7 +321,19 @@ class DatabaseSQLParser
     }
 
     /**
-     * Handle single quote state with proper escaping
+     * Manages the parser state while inside a single-quoted string literal.
+     *
+     * This method appends characters to the current statement until it finds a
+     * terminating single quote. It correctly handles standard SQL escaped quotes
+     * (e.g., 'It''s a test') by checking for two consecutive single quotes and
+     * remaining in the current state if they are found.
+     *
+     * @param string $char              The character currently being processed.
+     * @param string $nextChar          The next character in the sequence, for detecting escaped quotes.
+     * @param string &$currentStatement The accumulating SQL statement, passed by reference.
+     * @param int    $state             The current parser state (will be STATE_IN_SINGLE_QUOTE).
+     * @param int    $position          The current character's index in the full SQL string.
+     * @return int Returns STATE_NORMAL if the quote is terminated, otherwise returns the current state.
      */
     private function handleSingleQuoteState(string $char, string $nextChar, string &$currentStatement, int $state, int $position): int
     {
@@ -303,7 +354,18 @@ class DatabaseSQLParser
     }
 
     /**
-     * Handle double quote state (for identifiers)
+     * Manages the parser state while inside a double-quoted identifier.
+     *
+     * Appends characters to the current statement until a terminating double quote
+     * is found. It handles standard SQL escaped double quotes (e.g., "my""ident")
+     * by checking for two consecutive double quotes.
+     *
+     * @param string $char              The character currently being processed.
+     * @param string $nextChar          The next character in the sequence, for detecting escaped quotes.
+     * @param string &$currentStatement The accumulating SQL statement, passed by reference.
+     * @param int    $state             The current parser state (will be STATE_IN_DOUBLE_QUOTE).
+     * @param int    $position          The current character's index in the full SQL string.
+     * @return int Returns STATE_NORMAL if the identifier is terminated, otherwise returns the current state.
      */
     private function handleDoubleQuoteState(string $char, string $nextChar, string &$currentStatement, int $state, int $position): int
     {
@@ -324,7 +386,17 @@ class DatabaseSQLParser
     }
 
     /**
-     * Handle backtick state (MySQL identifiers)
+     * Manages the parser state while inside a backtick-quoted identifier (MySQL-specific).
+     *
+     * This method appends characters to the current statement until it finds the
+     * terminating backtick (`). It assumes no escaping within the identifier.
+     *
+     * @param string $char              The character currently being processed.
+     * @param string $nextChar          The next character in the sequence (unused).
+     * @param string &$currentStatement The accumulating SQL statement, passed by reference.
+     * @param int    $state             The current parser state (will be STATE_IN_BACKTICK).
+     * @param int    $position          The current character's index in the full SQL string.
+     * @return int Returns STATE_NORMAL if the identifier is terminated, otherwise returns the current state.
      */
     private function handleBacktickState(string $char, string $nextChar, string &$currentStatement, int $state, int $position): int
     {
@@ -338,7 +410,16 @@ class DatabaseSQLParser
     }
 
     /**
-     * Handle line comment state
+     * Manages the parser state while inside a single-line SQL comment (e.g., -- comment).
+     *
+     * This method consumes and optionally preserves characters until a newline
+     * character is found, at which point it transitions the parser back to the
+     * normal state.
+     *
+     * @param string $char              The character currently being processed.
+     * @param string &$currentStatement The accumulating SQL statement, passed by reference.
+     * @param int    $state             The current parser state (will be STATE_IN_LINE_COMMENT).
+     * @return int Returns STATE_NORMAL if a newline is found, otherwise returns the current state.
      */
     private function handleLineCommentState(string $char, string &$currentStatement, int $state): int
     {
@@ -357,7 +438,18 @@ class DatabaseSQLParser
     }
 
     /**
-     * Handle block comment state
+     * Manages the parser state while inside a multi-line block comment.
+     *
+     * This method consumes and optionally preserves characters until the closing
+     * sequence is detected, at which point it transitions the parser back
+     * to the normal state.
+     *
+     * @param string $char              The character currently being processed.
+     * @param string $nextChar          The next character in the sequence, for detecting the '*\/' delimiter.
+     * @param string &$currentStatement The accumulating SQL statement, passed by reference.
+     * @param int    $state             The current parser state (will be STATE_IN_BLOCK_COMMENT).
+     * @param int    $position          The current character's index in the full SQL string.
+     * @return int Returns STATE_NORMAL if the block comment is closed, otherwise returns the current state.
      */
     private function handleBlockCommentState(string $char, string $nextChar, string &$currentStatement, int $state, int $position): int
     {
@@ -376,7 +468,18 @@ class DatabaseSQLParser
     }
 
     /**
-     * Handle PostgreSQL dollar quote state
+     * Manages the parser state while inside a PostgreSQL dollar-quoted string.
+     *
+     * This method consumes characters until it finds the matching closing dollar-quote
+     * tag (e.g., the second `$tag$` in `$tag$some string$tag$`). It relies on the
+     * `isDollarQuoteEnd` method to perform the lookahead check for the correct tag.
+     *
+     * @param string $char              The character currently being processed.
+     * @param string $content           The entire SQL input string, used for lookahead matching.
+     * @param string &$currentStatement The accumulating SQL statement, passed by reference.
+     * @param int    $state             The current parser state (will be STATE_IN_DOLLAR_QUOTE).
+     * @param int    $position          The current character's index in the full SQL string.
+     * @return int Returns STATE_NORMAL if the closing tag is found, otherwise returns the current state.
      */
     private function handleDollarQuoteState(string $char, string $content, string &$currentStatement, int $state, int $position): int
     {
@@ -460,7 +563,13 @@ class DatabaseSQLParser
     }
 
     /**
-     * Handle line comment start
+     * Transitions the parser into the line comment state.
+     *
+     * If the 'preserve_comments' option is enabled, this method appends the
+     * comment delimiter (`--`) to the current statement before changing the state.
+     *
+     * @param string &$currentStatement The accumulating SQL statement, passed by reference.
+     * @return int                      Always returns STATE_IN_LINE_COMMENT.
      */
     private function handleLineCommentStart(string &$currentStatement): int
     {
@@ -473,7 +582,14 @@ class DatabaseSQLParser
     }
 
     /**
-     * Handle block comment start
+     * Transitions the parser into the block comment state.
+     *
+     * If the 'preserve_comments' option is enabled, this method appends the
+     * opening block comment delimiter (`/*`) to the current statement before
+     * changing the state.
+     *
+     * @param string &$currentStatement The accumulating SQL statement, passed by reference.
+     * @return int                      Always returns STATE_IN_BLOCK_COMMENT.
      */
     private function handleBlockCommentStart(string &$currentStatement): int
     {
@@ -486,7 +602,16 @@ class DatabaseSQLParser
     }
 
     /**
-     * Check if current character completes a statement
+     * Determines if the current character marks the end of a complete SQL statement.
+     *
+     * This method checks three primary conditions:
+     * 1. The character must match the current delimiter (e.g., ';').
+     * 2. The parser must not be inside a complex BEGIN...END block (e.g., in a trigger).
+     * 3. The delimiter must not be part of an incomplete PostgreSQL type cast.
+     *
+     * @param string $char             The character to evaluate.
+     * @param string $currentStatement The statement buffer collected so far.
+     * @return bool True if the statement is complete, false otherwise.
      */
     private function isStatementComplete(string $char, string $currentStatement): bool
     {
@@ -507,7 +632,15 @@ class DatabaseSQLParser
     }
 
     /**
-     * Check if we're inside a PostgreSQL type cast
+     * Checks if the statement buffer currently ends with an incomplete PostgreSQL type cast.
+     *
+     * This method uses a simple heuristic to prevent the parser from splitting a
+     * statement on a semicolon that might be part of a type-casting expression
+     * (e.g., `some_value::text`). It specifically looks for patterns like `::typename`
+     * or `::typename[` at the end of the string.
+     *
+     * @param string $statement The current statement buffer to inspect.
+     * @return bool             True if the statement appears to end with an incomplete type cast, false otherwise.
      */
     private function isInsideTypeCast(string $statement): bool
     {
@@ -529,6 +662,9 @@ class DatabaseSQLParser
 
     /**
      * Check if current text is a DELIMITER statement
+     * 
+     * @param string $text
+     * @return bool
      */
     private function isDelimiterStatement(string $text): bool
     {
@@ -536,7 +672,16 @@ class DatabaseSQLParser
     }
 
     /**
-     * Handle DELIMITER statement
+     * Handles a MySQL-specific `DELIMITER` command.
+     *
+     * When a `DELIMITER` statement is detected, this method extracts the new
+     * delimiter, updates the parser's state to use it, and then clears the
+     * `DELIMITER` command from the current statement buffer so it is not treated
+     * as an executable query.
+     *
+     * @param string &$currentStatement The accumulating SQL statement, passed by reference.
+     * @param string $char              The character currently being processed.
+     * @return int                      Always returns STATE_NORMAL.
      */
     private function handleDelimiterStatement(string &$currentStatement, string $char): int
     {
@@ -552,7 +697,15 @@ class DatabaseSQLParser
     }
 
     /**
-     * Process and clean a statement
+     * Cleans, validates, and finalizes a raw SQL statement string.
+     *
+     * This method is called once the parser has identified a complete statement.
+     * It trims whitespace, removes the trailing delimiter, and discards any
+     * statements that are empty or contain only comments (unless configured otherwise).
+     * It may also perform dialect-specific syntax validation.
+     *
+     * @param string $statement The raw statement string to be processed.
+     * @return string|null The cleaned SQL statement, or null if the statement should be discarded.
      */
     private function processStatement(string $statement): ?string
     {
@@ -591,6 +744,9 @@ class DatabaseSQLParser
 
     /**
      * Check if statement contains only comments
+     * 
+     * @param string $statement The raw statement string to be processed.
+     * @return bool True if the statement contains only comments, false otherwise.
      */
     private function isCommentOnlyStatement(string $statement): bool
     {
@@ -603,6 +759,9 @@ class DatabaseSQLParser
 
     /**
      * Validate and preserve PostgreSQL syntax
+     * 
+     * @param string $statement The statement string to be processed.
+     * @return string The processed statement.
      */
     private function validatePostgreSQLSyntax(string $statement): string
     {
@@ -620,6 +779,9 @@ class DatabaseSQLParser
 
     /**
      * Preserve PostgreSQL array syntax
+     * 
+     * @param string $statement The statement string to be processed
+     * @return string The processed statement
      */
     private function preserveArraySyntax(string $statement): string
     {
@@ -643,6 +805,9 @@ class DatabaseSQLParser
 
     /**
      * Check if array syntax is valid
+     * 
+     * @param string $arrayContent The content of the array literal
+     * @return bool True if valid, false otherwise
      */
     private function isValidArraySyntax(string $arrayContent): bool
     {
@@ -669,6 +834,9 @@ class DatabaseSQLParser
 
     /**
      * Repair array syntax
+     * 
+     * @param string $arrayContent The content of the array literal
+     * @return string The repaired array syntax
      */
     private function repairArraySyntax(string $arrayContent): string
     {
@@ -689,6 +857,9 @@ class DatabaseSQLParser
 
     /**
      * Preserve JSONB syntax
+     * 
+     * @param string $statement The statement to be processed
+     * @return string The processed statement
      */
     private function preserveJsonbSyntax(string $statement): string
     {
@@ -712,15 +883,30 @@ class DatabaseSQLParser
 
     /**
      * Check if string is valid JSON
+     * 
+     * @param string $jsonString The string to be validated
+     * @return bool True if valid, false otherwise
      */
     private function isValidJson(string $jsonString): bool
     {
-        json_decode($jsonString);
-        return json_last_error() === JSON_ERROR_NONE;
+        // PHP <= v8.2
+        if (!function_exists('json_validate')) {
+            try {
+                json_decode($jsonString, false, 512, 0 | JSON_THROW_ON_ERROR);
+                return true;
+            } catch (\JsonException $e) {
+                return false;
+            }
+        }
+
+        return json_validate($jsonString);
     }
 
     /**
      * Preserve type casting syntax
+     * 
+     * @param string $statement The statement to be processed
+     * @return string The processed statement
      */
     private function preserveTypeCasting(string $statement): string
     {
@@ -731,6 +917,8 @@ class DatabaseSQLParser
 
     /**
      * Get parsing statistics
+     * 
+     * @return array Array of parsing statistics
      */
     public function getStatistics(): array
     {
@@ -739,6 +927,8 @@ class DatabaseSQLParser
 
     /**
      * Reset statistics
+     * 
+     * @return void
      */
     private function resetStatistics(): void
     {
@@ -755,6 +945,9 @@ class DatabaseSQLParser
 
     /**
      * Set debug mode
+     * 
+     * @param bool $debug Debug mode flag
+     * @return void
      */
     public function setDebugMode(bool $debug): void
     {
@@ -763,6 +956,8 @@ class DatabaseSQLParser
 
     /**
      * Get current delimiter
+     * 
+     * @return string Current delimiter
      */
     public function getCurrentDelimiter(): string
     {
@@ -771,6 +966,9 @@ class DatabaseSQLParser
 
     /**
      * Validate statement syntax for specific database type
+     * 
+     * @param string $statement The statement to be validated
+     * @return array Array of validation issues
      */
     public function validateStatement(string $statement): array
     {
@@ -791,6 +989,9 @@ class DatabaseSQLParser
 
     /**
      * Validate PostgreSQL-specific statement
+     * 
+     * @param string $statement The statement to be processed
+     * @return array Array of validation issues
      */
     private function validatePostgreSQLStatement(string $statement): array
     {
@@ -814,6 +1015,9 @@ class DatabaseSQLParser
 
     /**
      * Validate MySQL-specific statement
+     * 
+     * @param string $statement The statement to be processed
+     * @return array Array of validation issues
      */
     private function validateMySQLStatement(string $statement): array
     {
@@ -829,6 +1033,9 @@ class DatabaseSQLParser
 
     /**
      * Identify statement type
+     * 
+     * @param string $statement The statement to be processed
+     * @return string The statement type
      */
     private function identifyStatementType(string $statement): string
     {

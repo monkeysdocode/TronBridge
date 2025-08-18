@@ -7,17 +7,10 @@
  * This is the preferred method for SQLite backups as it provides atomic,
  * concurrent-safe backup operations that work correctly with WAL mode.
  * 
- * **ENHANCED WITH FULL DEBUG SYSTEM INTEGRATION**
- * - Comprehensive logging of all backup operations and decisions
- * - Real-time progress tracking during backup operations
- * - Detailed error analysis and troubleshooting information
- * - Performance monitoring and optimization insights
  * 
  * Key Features:
  * - Uses SQLite3::backup() API for atomic backup operations
  * - Handles concurrent access safely (works with WAL mode)
- * - Real-time progress tracking with callback support
- * - Automatic retry logic for busy database conditions
  * - Comprehensive validation and integrity checking
  * - Supports both backup and restore operations
  * 
@@ -36,7 +29,7 @@ class SQLiteNativeBackupStrategy implements BackupStrategyInterface, RestoreStra
     use DebugLoggingTrait;
     use ConfigSanitizationTrait;
     use PathValidationTrait;
-    
+
     private Model $model;
     private PDO $pdo;
     private array $connectionConfig;
@@ -73,26 +66,21 @@ class SQLiteNativeBackupStrategy implements BackupStrategyInterface, RestoreStra
 
     /**
      * Create SQLite database backup using native backup API
-     * 
-     * Uses SQLite3::backup() method to create atomic, concurrent-safe backup.
-     * This method works correctly with WAL mode and handles busy database
-     * conditions with automatic retry logic.
-     * 
+     *
+     * Uses SQLite3::backup() for atomic, concurrent-safe backup. Progress is simulated (0% and 100%).
+     *
      * @param string $outputPath Path where backup file should be created
-     * @param array $options Backup configuration options
+     * @param array $options Backup configuration options (e.g., 'progress_callback', 'retry_attempts')
      * @return array Backup result with success status and metadata
      * @throws RuntimeException If backup fails
      */
-    public function createBackup(string $outputPath, array $options = []): array
-    {
+    public function createBackup(string $outputPath, array $options = []): array {
         $startTime = microtime(true);
-
         $this->validateBackupPath($outputPath);
 
         // Normalize options with defaults
         $options = array_merge([
             'progress_callback' => null,
-            'pages_per_step' => 100,
             'retry_attempts' => 3,
             'retry_delay_ms' => 100,
             'vacuum_source' => false,
@@ -106,28 +94,21 @@ class SQLiteNativeBackupStrategy implements BackupStrategyInterface, RestoreStra
         ]);
 
         try {
-            // Validate source database
             $this->validateSourceDatabase();
-
-            // Prepare backup directory
             $this->prepareBackupDirectory($outputPath);
 
-            // Vacuum source database if requested
             if ($options['vacuum_source']) {
                 $this->vacuumSourceDatabase();
             }
 
-            // Perform the backup operation
             $backupResult = $this->performNativeBackup($outputPath, $options);
 
-            // Validate backup if requested
             if ($options['validate_backup']) {
                 $validationResult = $this->validateBackupFile($outputPath);
                 $backupResult['validation'] = $validationResult;
             }
 
             $duration = microtime(true) - $startTime;
-
             $this->debugLog("SQLite native backup completed", DebugLevel::BASIC, [
                 'duration_seconds' => round($duration, 3),
                 'backup_size_bytes' => filesize($outputPath),
@@ -146,18 +127,14 @@ class SQLiteNativeBackupStrategy implements BackupStrategyInterface, RestoreStra
             ];
         } catch (Exception $e) {
             $duration = microtime(true) - $startTime;
-
             $this->debugLog("SQLite native backup failed", DebugLevel::BASIC, [
                 'duration_seconds' => round($duration, 3),
                 'error' => $e->getMessage(),
                 'output_path' => $outputPath
             ]);
-
-            // Cleanup failed backup file
             if (file_exists($outputPath)) {
                 unlink($outputPath);
             }
-
             return [
                 'success' => false,
                 'error' => $e->getMessage(),
@@ -168,15 +145,14 @@ class SQLiteNativeBackupStrategy implements BackupStrategyInterface, RestoreStra
     }
 
     /**
-     * Perform the actual native backup operation (ENHANCED VERSION)
-     * 
+     * Perform the actual native backup operation
+     *
      * @param string $outputPath Backup file path
      * @param array $options Backup options
      * @return array Backup operation results
-     * @throws RuntimeException If backup fails
+     * @throws RuntimeException If backup fails after retries
      */
-    private function performNativeBackup(string $outputPath, array $options): array
-    {
+    private function performNativeBackup(string $outputPath, array $options): array {
         $pagesCopied = 0;
         $totalPages = 0;
         $attempt = 0;
@@ -184,80 +160,20 @@ class SQLiteNativeBackupStrategy implements BackupStrategyInterface, RestoreStra
 
         while ($attempt < $maxAttempts) {
             $attempt++;
-
             $this->debugLog("Starting backup attempt", DebugLevel::DETAILED, [
                 'attempt' => $attempt,
-                'max_attempts' => $maxAttempts,
-                'pages_per_step' => $options['pages_per_step']
+                'max_attempts' => $maxAttempts
             ]);
 
             $sourceDb = null;
             $destDb = null;
-            $backup = null;
 
             try {
-                // Open source database with SQLite3
                 $sourceDb = new SQLite3($this->databasePath, SQLITE3_OPEN_READONLY);
-
-                // Create destination database
                 $destDb = new SQLite3($outputPath, SQLITE3_OPEN_READWRITE | SQLITE3_OPEN_CREATE);
 
-                // Initialize backup with enhanced error checking
-                $backup = $sourceDb->backup($destDb);
-
-                $this->debugLog("Backup initialization result", DebugLevel::VERBOSE, [
-                    'backup_result' => var_export($backup, true),
-                    'backup_type' => gettype($backup),
-                    'is_object' => is_object($backup),
-                    'is_sqlite3backup' => ($backup instanceof SQLite3Backup),
-                    'is_false' => ($backup === false),
-                    'is_true' => ($backup === true),
-                    'is_null' => ($backup === null),
-                    'php_version' => PHP_VERSION,
-                    'sqlite3_version' => SQLite3::version()['versionString']
-                ]);
-
-                // Enhanced backup validation
-                if ($backup === false || $backup === null) {
-                    $sourceError = $sourceDb->lastErrorMsg();
-                    $destError = $destDb->lastErrorMsg();
-
-                    throw new RuntimeException(
-                        "Failed to initialize SQLite backup. " .
-                            "Source error: $sourceError, Destination error: $destError"
-                    );
-                } else if ($backup === true) {
-                    // This should never happen but your system is doing it
-                    throw new RuntimeException(
-                        "SQLite backup() returned unexpected boolean true. " .
-                            "This may be a PHP SQLite3 extension bug. " .
-                            "PHP version: " . PHP_VERSION . ", " .
-                            "SQLite version: " . SQLite3::version()['versionString']
-                    );
-                } else if (!is_object($backup)) {
-                    throw new RuntimeException(
-                        "SQLite backup() returned unexpected type: " . gettype($backup) .
-                            " (value: " . var_export($backup, true) . ")"
-                    );
-                } else if (!($backup instanceof SQLite3Backup)) {
-                    throw new RuntimeException(
-                        "SQLite backup() returned wrong object type: " . get_class($backup) .
-                            " (expected SQLite3Backup)"
-                    );
-                }
-
-                // Verify backup object has required methods
-                if (!method_exists($backup, 'step')) {
-                    throw new RuntimeException("SQLite3Backup object missing step() method");
-                }
-
-                if (!method_exists($backup, 'finish')) {
-                    throw new RuntimeException("SQLite3Backup object missing finish() method");
-                }
-
-                // Backup object is valid, perform backup with progress tracking
-                $result = $this->executeBackupWithProgress($backup, $options);
-
+                // Perform backup and get results
+                $result = $this->executeBackup($sourceDb, $destDb, $options);
                 $pagesCopied = $result['pages_copied'];
                 $totalPages = $result['total_pages'];
 
@@ -267,9 +183,9 @@ class SQLiteNativeBackupStrategy implements BackupStrategyInterface, RestoreStra
                     'total_pages' => $totalPages
                 ]);
 
-                break; // Success, exit retry loop
-
-            } catch (Exception $e) {
+                break; // Success
+            } catch (RuntimeException $e) {
+                $errorCode = $sourceDb ? $sourceDb->lastErrorCode() : 0;
                 $this->debugLog("Backup attempt failed", DebugLevel::DETAILED, [
                     'attempt' => $attempt,
                     'error' => $e->getMessage(),
@@ -282,33 +198,16 @@ class SQLiteNativeBackupStrategy implements BackupStrategyInterface, RestoreStra
                     throw new RuntimeException("Backup failed after $maxAttempts attempts: " . $e->getMessage());
                 }
 
-                // Wait before retry
-                if ($options['retry_delay_ms'] > 0) {
-                    usleep($options['retry_delay_ms'] * 1000);
-                }
-
-                // Clean up failed backup file
-                if (file_exists($outputPath)) {
-                    unlink($outputPath);
+                // Retry on busy/locked errors
+                if (in_array($errorCode, [SQLITE3_BUSY, SQLITE3_LOCKED])) {
+                    if ($options['retry_delay_ms'] > 0) {
+                        usleep($options['retry_delay_ms'] * 1000);
+                    }
                 }
             } finally {
-                // Always cleanup resources with proper type checking
-                try {
-                    if ($backup && is_object($backup) && method_exists($backup, 'finish')) {
-                        $backup->finish();
-                    }
-                    if ($sourceDb) {
-                        $sourceDb->close();
-                    }
-                    if ($destDb) {
-                        $destDb->close();
-                    }
-                } catch (Exception $cleanupError) {
-                    // Log cleanup errors but don't fail the operation
-                    $this->debugLog("Resource cleanup error", DebugLevel::VERBOSE, [
-                        'cleanup_error' => $cleanupError->getMessage()
-                    ]);
-                }
+                if ($sourceDb) $sourceDb->close();
+                if ($destDb) $destDb->close();
+                if (file_exists($outputPath) && $pagesCopied === 0) unlink($outputPath); // Cleanup incomplete backups
             }
         }
 
@@ -319,80 +218,61 @@ class SQLiteNativeBackupStrategy implements BackupStrategyInterface, RestoreStra
         ];
     }
 
+
     /**
-     * Execute backup with progress tracking
-     * 
-     * @param SQLite3Backup $backup Backup resource
+     * Execute the backup operation (atomic, as per PHP SQLite3 API)
+     *
+     * @param SQLite3 $sourceDb Source database connection
+     * @param SQLite3 $destDb Destination database connection
      * @param array $options Backup options
      * @return array Backup execution results
+     * @throws RuntimeException If backup fails
      */
-    private function executeBackupWithProgress($backup, array $options): array
-    {
-        $pagesCopied = 0;
-        $totalPages = 0;
+    private function executeBackup(SQLite3 $sourceDb, SQLite3 $destDb, array $options): array {
         $startTime = microtime(true);
+        $this->debugLog("Starting backup execution (atomic)", DebugLevel::VERBOSE);
 
-        $this->debugLog("Starting backup execution with progress tracking", DebugLevel::VERBOSE, [
-            'pages_per_step' => $options['pages_per_step']
-        ]);
-
-        while (true) {
-            // Perform backup step
-            $result = $backup->step($options['pages_per_step']);
-
-            // Get progress information
-            $remaining = $backup->remaining();
-            $pageCount = $backup->pagecount();
-
-            $pagesCopied = $pageCount - $remaining;
-            $totalPages = $pageCount;
-
-            $this->debugLog("Backup step completed", DebugLevel::VERBOSE, [
-                'step_result' => $result,
-                'pages_copied' => $pagesCopied,
-                'pages_remaining' => $remaining,
-                'total_pages' => $totalPages,
-                'progress_percent' => $totalPages > 0 ? round(($pagesCopied / $totalPages) * 100, 1) : 0
+        // Simulate 0% progress
+        if (isset($options['progress_callback']) && is_callable($options['progress_callback'])) {
+            call_user_func($options['progress_callback'], [
+                'pages_copied' => 0,
+                'total_pages' => 0,
+                'progress_percent' => 0,
+                'duration_seconds' => 0
             ]);
-
-            // Call progress callback if provided
-            if ($options['progress_callback'] && is_callable($options['progress_callback'])) {
-                $progress = [
-                    'pages_copied' => $pagesCopied,
-                    'total_pages' => $totalPages,
-                    'progress_percent' => $totalPages > 0 ? ($pagesCopied / $totalPages) * 100 : 0,
-                    'duration_seconds' => microtime(true) - $startTime
-                ];
-
-                call_user_func($options['progress_callback'], $progress);
-            }
-
-            // Check completion status
-            if ($result === SQLITE3_DONE) {
-                $this->debugLog("Backup execution completed successfully", DebugLevel::DETAILED, [
-                    'total_pages_copied' => $pagesCopied,
-                    'duration_seconds' => round(microtime(true) - $startTime, 3)
-                ]);
-                break;
-            }
-
-            if ($result !== SQLITE3_OK && $result !== SQLITE3_BUSY && $result !== SQLITE3_LOCKED) {
-                throw new RuntimeException("Backup step failed with code: $result");
-            }
-
-            // Brief pause for busy/locked conditions
-            if ($result === SQLITE3_BUSY || $result === SQLITE3_LOCKED) {
-                usleep(50000); // 50ms
-            }
         }
 
-        $backup->finish();
+        // Perform atomic backup
+        if (!$sourceDb->backup($destDb)) {
+            throw new RuntimeException("Backup failed: " . $sourceDb->lastErrorMsg());
+        }
+
+        // Estimate pages (using 4KB page size)
+        $backupSize = $this->estimateBackupSize();
+        $totalPages = $backupSize > 0 ? ceil($backupSize / 4096) : 0;
+        $pagesCopied = $totalPages;
+
+        // Simulate 100% progress
+        if (isset($options['progress_callback']) && is_callable($options['progress_callback'])) {
+            call_user_func($options['progress_callback'], [
+                'pages_copied' => $pagesCopied,
+                'total_pages' => $totalPages,
+                'progress_percent' => 100,
+                'duration_seconds' => microtime(true) - $startTime
+            ]);
+        }
+
+        $this->debugLog("Backup execution completed", DebugLevel::DETAILED, [
+            'pages_copied' => $pagesCopied,
+            'duration_seconds' => round(microtime(true) - $startTime, 3)
+        ]);
 
         return [
             'pages_copied' => $pagesCopied,
             'total_pages' => $totalPages
         ];
     }
+
 
     // =============================================================================
     // RESTORE OPERATIONS
@@ -486,284 +366,38 @@ class SQLiteNativeBackupStrategy implements BackupStrategyInterface, RestoreStra
      * 
      * @return array Comprehensive capability test results
      */
-    public function testCapabilities(): array
-    {
-        $this->debugLog("Testing SQLite native backup capabilities", DebugLevel::BASIC);
-
+    public function testCapabilities(): array {
         $results = [
             'strategy_type' => $this->getStrategyType(),
             'sqlite3_extension' => extension_loaded('sqlite3'),
-            'sqlite3_version' => null,
-            'source_database_accessible' => false,
-            'source_database_readable' => false,
-            'backup_api_functional' => false,
-            'temp_directory_writable' => false,
+            'sqlite3_version' => SQLite3::version()['versionString'] ?? null,
+            'source_database_accessible' => file_exists($this->databasePath) && is_readable($this->databasePath),
+            'temp_directory_writable' => is_writable(sys_get_temp_dir()),
+            'backup_api_functional' => $this->testBackupAPI(),
             'overall_status' => 'unknown'
         ];
-
-        try {
-            // Check SQLite3 extension and version
-            if ($results['sqlite3_extension']) {
-                $results['sqlite3_version'] = SQLite3::version()['versionString'];
-            }
-
-            // Test source database access
-            if (file_exists($this->databasePath)) {
-                $results['source_database_accessible'] = true;
-                $results['source_database_readable'] = is_readable($this->databasePath);
-            }
-
-            // Test temp directory writability
-            $results['temp_directory_writable'] = is_writable(sys_get_temp_dir());
-
-            // Test backup API functionality
-            if ($results['sqlite3_extension'] && $results['source_database_accessible']) {
-                $results['backup_api_functional'] = $this->testBackupAPI();
-            }
-
-            // Determine overall status
-            $results['overall_status'] = $this->evaluateOverallStatus($results);
-
-            $this->debugLog("Capability testing completed", DebugLevel::DETAILED, $results);
-        } catch (Exception $e) {
-            $results['test_error'] = $e->getMessage();
-            $results['overall_status'] = 'failed';
-
-            $this->debugLog("Capability testing failed", DebugLevel::BASIC, [
-                'error' => $e->getMessage()
-            ]);
-        }
-
+        $results['overall_status'] = $this->evaluateOverallStatus($results);
         return $results;
     }
+
 
     /**
      * Test backup API functionality with minimal operation
      * 
      * @return bool True if backup API is functional
      */
-    private function testBackupAPI(): bool
-    {
-        $sourceDb = null;
-        $destDb = null;
-        $backup = null;
-
+    private function testBackupAPI(): bool {
+        // [Simplified: Test boolean return, no object checks]
+        $testBackupPath = sys_get_temp_dir() . '/SQLITE3_backup_test_' . uniqid() . '.db';
         try {
-            $testBackupPath = sys_get_temp_dir() . '/SQLITE3_backup_test_' . uniqid() . '.db';
-
-            $this->debugLog("Testing backup API functionality", DebugLevel::VERBOSE, [
-                'source_database' => $this->databasePath,
-                'test_backup_path' => $testBackupPath,
-                'source_exists' => file_exists($this->databasePath),
-                'source_readable' => is_readable($this->databasePath),
-                'temp_dir_writable' => is_writable(dirname($testBackupPath))
-            ]);
-
-            // Validate source database exists and is readable
-            if (!file_exists($this->databasePath)) {
-                $this->debugLog("Source database does not exist", DebugLevel::VERBOSE, [
-                    'source_path' => $this->databasePath
-                ]);
-                return false;
-            }
-
-            if (!is_readable($this->databasePath)) {
-                $this->debugLog("Source database is not readable", DebugLevel::VERBOSE, [
-                    'source_path' => $this->databasePath
-                ]);
-                return false;
-            }
-
-            // Try to open source database
-            try {
-                $sourceDb = new SQLite3($this->databasePath, SQLITE3_OPEN_READONLY);
-            } catch (Exception $e) {
-                $this->debugLog("Failed to open source database", DebugLevel::VERBOSE, [
-                    'error' => $e->getMessage(),
-                    'source_path' => $this->databasePath
-                ]);
-                return false;
-            }
-
-            // Try to create destination database
-            try {
-                $destDb = new SQLite3($testBackupPath, SQLITE3_OPEN_READWRITE | SQLITE3_OPEN_CREATE);
-            } catch (Exception $e) {
-                $this->debugLog("Failed to create destination database", DebugLevel::VERBOSE, [
-                    'error' => $e->getMessage(),
-                    'dest_path' => $testBackupPath
-                ]);
-
-                if ($sourceDb) {
-                    $sourceDb->close();
-                }
-                return false;
-            }
-
-            // Try to initialize backup
-            try {
-                $backup = $sourceDb->backup($destDb);
-
-                $this->debugLog("Backup initialization result", DebugLevel::VERBOSE, [
-                    'backup_result' => var_export($backup, true),
-                    'backup_type' => gettype($backup),
-                    'is_object' => is_object($backup),
-                    'is_sqlite3backup' => ($backup instanceof SQLite3Backup),
-                    'is_false' => ($backup === false),
-                    'is_true' => ($backup === true),
-                    'is_null' => ($backup === null)
-                ]);
-            } catch (Exception $e) {
-                $this->debugLog("Failed to initialize backup", DebugLevel::VERBOSE, [
-                    'error' => $e->getMessage()
-                ]);
-
-                $sourceDb->close();
-                $destDb->close();
-                return false;
-            }
-
-            // Enhanced type checking for backup object
-            if ($backup === false || $backup === null) {
-                // Expected failure case
-                $sourceError = $sourceDb->lastErrorMsg();
-                $destError = $destDb->lastErrorMsg();
-
-                $this->debugLog("Backup initialization failed (expected)", DebugLevel::VERBOSE, [
-                    'source_error_msg' => $sourceError,
-                    'source_error_code' => $sourceDb->lastErrorCode(),
-                    'dest_error_msg' => $destError,
-                    'dest_error_code' => $destDb->lastErrorCode(),
-                    'backup_result' => var_export($backup, true)
-                ]);
-
-                $sourceDb->close();
-                $destDb->close();
-                return false;
-            } else if ($backup === true) {
-                // Unexpected case - backup() returned boolean true
-                $this->debugLog("Backup initialization returned unexpected boolean true", DebugLevel::VERBOSE, [
-                    'php_version' => PHP_VERSION,
-                    'sqlite3_version' => SQLite3::version()['versionString'],
-                    'backup_result' => var_export($backup, true),
-                    'possible_php_bug' => 'SQLite3::backup() should never return boolean true'
-                ]);
-
-                $sourceDb->close();
-                $destDb->close();
-                return false;
-            } else if (!is_object($backup)) {
-                // Any other unexpected type
-                $this->debugLog("Backup initialization returned unexpected type", DebugLevel::VERBOSE, [
-                    'backup_type' => gettype($backup),
-                    'backup_value' => var_export($backup, true),
-                    'expected_type' => 'SQLite3Backup object or false'
-                ]);
-
-                $sourceDb->close();
-                $destDb->close();
-                return false;
-            } else if (!($backup instanceof SQLite3Backup)) {
-                // Object but not the right type
-                $this->debugLog("Backup initialization returned wrong object type", DebugLevel::VERBOSE, [
-                    'actual_class' => get_class($backup),
-                    'expected_class' => 'SQLite3Backup',
-                    'backup_methods' => get_class_methods($backup)
-                ]);
-
-                $sourceDb->close();
-                $destDb->close();
-                return false;
-            } else {
-                // Backup object is valid SQLite3Backup, proceed with step
-                $functional = false;
-
-                try {
-                    // Verify the object has the methods we need
-                    if (!method_exists($backup, 'step')) {
-                        throw new RuntimeException("SQLite3Backup object missing step() method");
-                    }
-
-                    if (!method_exists($backup, 'finish')) {
-                        throw new RuntimeException("SQLite3Backup object missing finish() method");
-                    }
-
-                    $this->debugLog("About to call backup->step()", DebugLevel::VERBOSE, [
-                        'backup_class' => get_class($backup),
-                        'backup_methods' => get_class_methods($backup)
-                    ]);
-
-                    $result = $backup->step(1); // Copy just one page
-
-                    $this->debugLog("Backup step completed", DebugLevel::VERBOSE, [
-                        'step_result' => $result,
-                        'step_result_type' => gettype($result),
-                        'step_result_name' => $this->getSQLiteResultName($result)
-                    ]);
-
-                    $backup->finish();
-
-                    $functional = ($result === SQLITE3_OK || $result === SQLITE3_DONE);
-
-                    $this->debugLog("Backup step test completed", DebugLevel::VERBOSE, [
-                        'step_result' => $result,
-                        'step_result_name' => $this->getSQLiteResultName($result),
-                        'functional' => $functional,
-                        'pages_remaining' => method_exists($backup, 'remaining') ? $backup->remaining() : 'method_not_available',
-                        'page_count' => method_exists($backup, 'pagecount') ? $backup->pagecount() : 'method_not_available'
-                    ]);
-                } catch (Exception $e) {
-                    $this->debugLog("Backup step failed with exception", DebugLevel::VERBOSE, [
-                        'error' => $e->getMessage(),
-                        'exception_class' => get_class($e),
-                        'backup_class' => get_class($backup),
-                        'trace' => $e->getTraceAsString()
-                    ]);
-
-                    try {
-                        if (method_exists($backup, 'finish')) {
-                            $backup->finish();
-                        }
-                    } catch (Exception $finishError) {
-                        $this->debugLog("Backup finish also failed", DebugLevel::VERBOSE, [
-                            'finish_error' => $finishError->getMessage()
-                        ]);
-                    }
-                    $functional = false;
-                }
-            }
-
-            // Close database connections
+            $sourceDb = new SQLite3($this->databasePath, SQLITE3_OPEN_READONLY);
+            $destDb = new SQLite3($testBackupPath, SQLITE3_OPEN_READWRITE | SQLITE3_OPEN_CREATE);
+            $success = $sourceDb->backup($destDb);
             $sourceDb->close();
             $destDb->close();
-
-            // Cleanup test file
-            if (file_exists($testBackupPath)) {
-                unlink($testBackupPath);
-            }
-
-            return $functional;
+            if (file_exists($testBackupPath)) unlink($testBackupPath);
+            return $success;
         } catch (Exception $e) {
-            $this->debugLog("Backup API test failed with exception", DebugLevel::VERBOSE, [
-                'error' => $e->getMessage(),
-                'exception_class' => get_class($e)
-            ]);
-
-            // Clean up resources
-            try {
-                if ($backup && method_exists($backup, 'finish')) {
-                    $backup->finish();
-                }
-                if ($sourceDb) {
-                    $sourceDb->close();
-                }
-                if ($destDb) {
-                    $destDb->close();
-                }
-            } catch (Exception $cleanupError) {
-                // Ignore cleanup errors
-            }
-
             return false;
         }
     }
@@ -1049,23 +683,23 @@ class SQLiteNativeBackupStrategy implements BackupStrategyInterface, RestoreStra
         return 'SQLite Native Backup (SQLite3::backup() API)';
     }
 
-    public function getSelectionCriteria(): array
-    {
+    public function getSelectionCriteria(): array {
         return [
-            'priority' => 1, // Highest priority for SQLite
+            'priority' => 1,
             'requirements' => ['sqlite3_extension'],
             'advantages' => [
                 'Atomic operation',
                 'Concurrent-safe',
-                'Works with WAL mode',
-                'Native progress tracking'
+                'Works with WAL mode'
             ],
             'limitations' => [
                 'Requires SQLite3 extension',
-                'SQLite databases only'
+                'SQLite databases only',
+                'No incremental progress tracking'
             ]
         ];
     }
+
 
     public function supportsCompression(): bool
     {

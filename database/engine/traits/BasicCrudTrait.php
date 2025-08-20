@@ -537,7 +537,8 @@ trait BasicCrudTrait {
      * @param array $data Associative array of column => value pairs
      * @param string $unique_column Column name to check for uniqueness (validated)
      * @param string|null $target_table Target table name (defaults to current module)
-     * @return int ID of inserted or updated record
+     * @param string|null $primary_key_column Primary key column name (auto-detected if null)
+     * @return mixed Primary key value of inserted or updated record
      * @throws InvalidArgumentException If data validation fails or unique_column is invalid
      * @throws RuntimeException If database operation fails
      * 
@@ -556,8 +557,9 @@ trait BasicCrudTrait {
      *     'name' => 'Widget Pro',
      *     'price' => 29.99
      * ], 'sku', 'products');
+     * 
      */
-    public function upsert(array $data, string $unique_column, ?string $target_table = null): int
+    public function upsert(array $data, string $unique_column, ?string $target_table = null, ?string $primary_key_column = null)
     {
         if (empty($data)) {
             throw new InvalidArgumentException("Data array cannot be empty");
@@ -574,68 +576,254 @@ trait BasicCrudTrait {
         QueryBuilder::validateTableName($table);
         QueryBuilder::validateColumnName($unique_column);
 
+        // Auto-detect primary key if not provided
+        if ($primary_key_column === null) {
+            $primary_key_column = $this->getPrimaryKey($table);
+        }
+
         $unique_value = $data[$unique_column];
 
-        $this->debugLog("UPSERT operation initiated", DebugCategory::SQL, DebugLevel::DETAILED, [
+        $this->debugLog("OPTIMIZED UPSERT operation initiated", DebugCategory::SQL, DebugLevel::DETAILED, [
             'table' => $table,
             'unique_column' => $unique_column,
+            'primary_key_column' => $primary_key_column,
             'data_fields' => array_keys($data),
-            'operation' => 'upsert'
+            'database_type' => $this->getDbType(),
+            'operation' => 'native_upsert'
         ]);
 
         try {
-            // Check if record exists
-            $existingRecord = $this->get_one_where($unique_column, $unique_value, $table);
-
-            if ($existingRecord) {
-                // Update existing record
-                $this->debugLog("UPSERT: Updating existing record", DebugCategory::SQL, DebugLevel::DETAILED, [
-                    'existing_id' => $existingRecord->id,
-                    'unique_column' => $unique_column,
-                    'unique_value' => $unique_value
-                ]);
-
-                $success = $this->update($existingRecord->id, $data, $table);
-                $recordId = $success ? $existingRecord->id : 0;
-            } else {
-                // Insert new record
-                $this->debugLog("UPSERT: Inserting new record", DebugCategory::SQL, DebugLevel::DETAILED, [
-                    'unique_column' => $unique_column,
-                    'unique_value' => $unique_value
-                ]);
-
-                $recordId = $this->insert($data, $table);
-            }
+            // Use database-specific native upsert for optimal performance
+            $recordId = $this->performNativeUpsert($data, $unique_column, $table, $primary_key_column);
 
             if ($this->debug) {
                 $executionTime = microtime(true) - $startTime;
 
-                $this->debugLog("UPSERT operation completed", DebugCategory::SQL, DebugLevel::BASIC, [
+                $this->debugLog("OPTIMIZED UPSERT operation completed", DebugCategory::SQL, DebugLevel::BASIC, [
                     'table' => $table,
                     'unique_column' => $unique_column,
+                    'primary_key_column' => $primary_key_column,
                     'record_id' => $recordId,
-                    'operation_type' => $existingRecord ? 'update' : 'insert',
+                    'database_type' => $this->getDbType(),
                     'execution_time_ms' => round($executionTime * 1000, 2),
-                    'operation' => 'upsert'
+                    'operation' => 'native_upsert'
                 ]);
 
-                $this->debug()->analyzeBulkOperation('upsert', 1, [
+                $this->debug()->analyzeBulkOperation('native_upsert', 1, [
                     'table' => $table,
-                    'operation_type' => $existingRecord ? 'update' : 'insert',
+                    'database_type' => $this->getDbType(),
                     'execution_time' => $executionTime,
-                    'unique_column' => $unique_column
+                    'unique_column' => $unique_column,
+                    'primary_key_column' => $primary_key_column
                 ]);
             }
 
             return $recordId;
         } catch (Exception $e) {
             $this->lastError = $e->getMessage();
-            $this->debugLog("UPSERT operation failed", DebugCategory::SQL, DebugLevel::BASIC, [
+            $this->debugLog("OPTIMIZED UPSERT operation failed", DebugCategory::SQL, DebugLevel::BASIC, [
                 'error' => $e->getMessage(),
                 'table' => $table,
-                'unique_column' => $unique_column
+                'unique_column' => $unique_column,
+                'primary_key_column' => $primary_key_column,
+                'database_type' => $this->getDbType()
             ]);
-            throw new RuntimeException("Failed to execute upsert operation: " . $e->getMessage());
+            throw new RuntimeException("Failed to execute optimized upsert operation: " . $e->getMessage());
         }
+    }
+
+    /**
+     * Perform database-specific native upsert operation
+     * 
+     * @param array $data Data to upsert
+     * @param string $unique_column Unique column for conflict detection
+     * @param string $table Target table
+     * @param string $primary_key_column Primary key column name
+     * @return mixed Record primary key value
+     * @throws RuntimeException If upsert fails
+     */
+    private function performNativeUpsert(array $data, string $unique_column, string $table, string $primary_key_column)
+    {
+        $dbType = $this->getDbType();
+
+        switch ($dbType) {
+            case 'mysql':
+                return $this->performMySQLUpsert($data, $unique_column, $table, $primary_key_column);
+
+            case 'postgresql':
+            case 'postgres':
+            case 'pgsql':
+                return $this->performPostgreSQLUpsert($data, $unique_column, $table, $primary_key_column);
+
+            case 'sqlite':
+                return $this->performSQLiteUpsert($data, $unique_column, $table, $primary_key_column);
+
+            default:
+                throw new RuntimeException("Upsert not supported for database type '$dbType'.");
+        }
+    }
+
+    /**
+     * MySQL-specific upsert using INSERT ... ON DUPLICATE KEY UPDATE
+     * 
+     * @param array $data Data to upsert
+     * @param string $unique_column Unique column for conflict detection
+     * @param string $table Target table
+     * @param string $primary_key_column Primary key column name
+     * @return mixed Record primary key value
+     */
+    private function performMySQLUpsert(array $data, string $unique_column, string $table, string $primary_key_column)
+    {
+        $columns = array_keys($data);
+        $placeholders = ':' . implode(', :', $columns);
+        $columnsList = implode(', ', $columns);
+
+        // Build UPDATE clause for ON DUPLICATE KEY UPDATE
+        $updateClauses = [];
+        foreach ($columns as $column) {
+            if ($column !== $primary_key_column) { // Don't update the primary key
+                $updateClauses[] = "$column = VALUES($column)";
+            }
+        }
+        $updateClause = implode(', ', $updateClauses);
+
+        $sql = "INSERT INTO $table ($columnsList) VALUES ($placeholders)";
+        if (!empty($updateClauses)) {
+            $sql .= " ON DUPLICATE KEY UPDATE $updateClause";
+        }
+
+        $this->debugLog("MySQL UPSERT query generated", DebugCategory::SQL, DebugLevel::DETAILED, [
+            'sql' => $sql,
+            'table' => $table,
+            'unique_column' => $unique_column,
+            'primary_key_column' => $primary_key_column
+        ]);
+
+        $stmt = $this->getPreparedStatement($sql);
+        $this->executeStatement($stmt, $data);
+
+        // Handle different primary key scenarios
+        if ($primary_key_column === $unique_column) {
+            // The unique column IS the primary key, return its value
+            return $data[$unique_column];
+        }
+
+        // Try to get auto-generated ID first
+        $lastInsertId = $this->pdo->lastInsertId();
+
+        if ($lastInsertId > 0) {
+            // This was an INSERT operation with auto-increment
+            return is_numeric($lastInsertId) ? (int)$lastInsertId : $lastInsertId;
+        }
+
+        // This was an UPDATE operation, get the primary key of the updated record
+        $uniqueValue = $data[$unique_column];
+        $record = $this->get_one_where($unique_column, $uniqueValue, $table);
+        return $record ? $record->{$primary_key_column} : null;
+    }
+
+    /**
+     * PostgreSQL-specific upsert using INSERT ... ON CONFLICT ... DO UPDATE
+     * 
+     * @param array $data Data to upsert
+     * @param string $unique_column Unique column for conflict detection
+     * @param string $table Target table
+     * @param string $primary_key_column Primary key column name
+     * @return mixed Record primary key value
+     */
+    private function performPostgreSQLUpsert(array $data, string $unique_column, string $table, string $primary_key_column)
+    {
+        $columns = array_keys($data);
+        $placeholders = ':' . implode(', :', $columns);
+        $columnsList = implode(', ', $columns);
+
+        // Build UPDATE clause for ON CONFLICT DO UPDATE
+        $updateClauses = [];
+        foreach ($columns as $column) {
+            if ($column !== $primary_key_column && $column !== $unique_column) {
+                $updateClauses[] = "$column = EXCLUDED.$column";
+            }
+        }
+        $updateClause = implode(', ', $updateClauses);
+
+        $sql = "INSERT INTO $table ($columnsList) VALUES ($placeholders)";
+        if (!empty($updateClauses)) {
+            $sql .= " ON CONFLICT ($unique_column) DO UPDATE SET $updateClause";
+        } else {
+            $sql .= " ON CONFLICT ($unique_column) DO NOTHING";
+        }
+        $sql .= " RETURNING $primary_key_column";
+
+        $this->debugLog("PostgreSQL UPSERT query generated", DebugCategory::SQL, DebugLevel::DETAILED, [
+            'sql' => $sql,
+            'table' => $table,
+            'unique_column' => $unique_column,
+            'primary_key_column' => $primary_key_column
+        ]);
+
+        $stmt = $this->getPreparedStatement($sql);
+        $this->executeStatement($stmt, $data);
+
+        // PostgreSQL returns the primary key directly via RETURNING clause
+        $result = $stmt->fetch(PDO::FETCH_OBJ);
+        return $result ? $result->{$primary_key_column} : null;
+    }
+
+    /**
+     * SQLite-specific upsert using INSERT ... ON CONFLICT ... DO UPDATE
+     * 
+     * Uses modern SQLite syntax (3.24.0+) which preserves the original row and primary key,
+     * only updating the specified columns. Safe to use with PHP 8.1+ requirement.
+     * 
+     * @param array $data Data to upsert
+     * @param string $unique_column Unique column for conflict detection
+     * @param string $table Target table
+     * @param string $primary_key_column Primary key column name
+     * @return mixed Record primary key value
+     */
+    private function performSQLiteUpsert(array $data, string $unique_column, string $table, string $primary_key_column)
+    {
+        $columns = array_keys($data);
+        $placeholders = ':' . implode(', :', $columns);
+        $columnsList = implode(', ', $columns);
+
+        // Build UPDATE clause for ON CONFLICT DO UPDATE
+        $updateClauses = [];
+        foreach ($columns as $column) {
+            if ($column !== $primary_key_column && $column !== $unique_column) {
+                $updateClauses[] = "$column = excluded.$column";
+            }
+        }
+        $updateClause = implode(', ', $updateClauses);
+
+        $sql = "INSERT INTO $table ($columnsList) VALUES ($placeholders)";
+        if (!empty($updateClauses)) {
+            $sql .= " ON CONFLICT($unique_column) DO UPDATE SET $updateClause";
+        } else {
+            $sql .= " ON CONFLICT($unique_column) DO NOTHING";
+        }
+        $sql .= " RETURNING $primary_key_column";
+
+        $this->debugLog("SQLite UPSERT query generated", DebugCategory::SQL, DebugLevel::DETAILED, [
+            'sql' => $sql,
+            'table' => $table,
+            'unique_column' => $unique_column,
+            'primary_key_column' => $primary_key_column,
+            'method' => 'on_conflict_do_update'
+        ]);
+
+        $stmt = $this->getPreparedStatement($sql);
+        $this->executeStatement($stmt, $data);
+
+        // Get the primary key value using RETURNING clause
+        $result = $stmt->fetch(PDO::FETCH_OBJ);
+        if ($result) {
+            return $result->{$primary_key_column};
+        }
+
+        // Fallback if RETURNING doesn't work (very old SQLite versions)
+        $uniqueValue = $data[$unique_column];
+        $record = $this->get_one_where($unique_column, $uniqueValue, $table);
+        return $record ? $record->{$primary_key_column} : null;
     }
 }

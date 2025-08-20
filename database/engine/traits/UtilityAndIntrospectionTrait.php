@@ -502,6 +502,56 @@ trait UtilityAndIntrospectionTrait {
     }
 
     /**
+     * Detect the primary key column for a table
+     * 
+     * @param string $table Table name to inspect
+     * @return string Primary key column name (defaults to 'id' if not found)
+     */
+    protected function getPrimaryKey(string $table): string
+    {
+        try {
+            $dbType = $this->getDbType();
+
+            switch ($dbType) {
+                case 'mysql':
+                    $sql = "SHOW KEYS FROM $table WHERE Key_name = 'PRIMARY'";
+                    $result = $this->query($sql, 'object');
+                    return $result ? $result->Column_name : 'id';
+
+                case 'postgresql':
+                case 'postgres':
+                case 'pgsql':
+                    $sql = "SELECT a.attname
+                        FROM pg_index i
+                        JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+                        WHERE i.indrelid = '$table'::regclass AND i.indisprimary";
+                    $result = $this->query($sql, 'object');
+                    return $result ? $result->attname : 'id';
+
+                case 'sqlite':
+                    $sql = "PRAGMA table_info($table)";
+                    $result = $this->query($sql, 'object');
+                    foreach ($result as $row) {
+                        if ($row->pk == 1) {
+                            return $row->name;
+                        }
+                    }
+                    return 'id';
+
+                default:
+                    return 'id';
+            }
+        } catch (Exception $e) {
+            $this->debugLog("Failed to detect primary key, defaulting to 'id'", DebugCategory::SQL, DebugLevel::DETAILED, [
+                'table' => $table,
+                'error' => $e->getMessage(),
+                'database_type' => $this->getDbType()
+            ]);
+            return 'id';
+        }
+    }
+
+    /**
      * Resequence table IDs with cross-database compatibility and safety checks
      * 
      * Safely resequences auto-increment IDs in a table starting from 1, handling
@@ -1005,19 +1055,6 @@ trait UtilityAndIntrospectionTrait {
     {
         $this->performance()->disablePerformanceMode();
     }
-
-    /**
-     * Manually configure bulk operation thresholds
-     * 
-     * @param int $recordThreshold Number of records to trigger bulk mode
-     * @param int $operationThreshold Number of operations to trigger bulk mode
-     * @return void
-     */
-    public function setBulkThresholds(int $recordThreshold, int $operationThreshold): void
-    {
-        $this->performance()->setBulkThresholds($recordThreshold, $operationThreshold);
-    }
-
 
     /**
      * Check if debug mode is currently enabled

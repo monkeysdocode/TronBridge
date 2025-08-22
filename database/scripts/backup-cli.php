@@ -279,13 +279,14 @@ class BackupCLI
         $this->info("Testing database backup capabilities...");
         
         try {
+            echo "Creating model...\n";
             $model = $this->createModel($this->options['source']);
             $this->configureDebug($model);
             
             $capabilities = $model->backup()->getCapabilities();
-            $testResults = $model->backup()->testCapabilities();
-            
             $this->displayCapabilities($capabilities);
+
+            $testResults = $model->backup()->testCapabilities();
             $this->displayTestResults($testResults);
             
             // Show debug output if enabled
@@ -452,17 +453,7 @@ class BackupCLI
      */
     private function createModel(string $connectionString): Model
     {
-        // Parse connection string
-        $parsedConnection = $this->parseConnectionString($connectionString);
-        
-        // Create Model with connection parameters
-        if ($parsedConnection['type'] === 'sqlite') {
-            $model = new Model(null, $connectionString);
-        } else {
-            $model = new Model('database', $connectionString);
-        }
-        
-        return $model;
+        return new Model(null, $connectionString);
     }
 
     /**

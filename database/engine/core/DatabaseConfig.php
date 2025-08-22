@@ -281,26 +281,28 @@ class DatabaseConfig
             return self::sqlite($dbFile);
         }
 
-        // Handle PostgreSQL DSN
-        if (str_starts_with($connection, 'postgresql:') || str_starts_with($connection, 'postgres:') || str_starts_with($connection, 'pgsql:')) {
-            $parts = [];
-            $prefix_len = str_starts_with($connection, 'postgresql:') ? 11 : (str_starts_with($connection, 'postgres:') ? 9 : 6);
-            parse_str(str_replace(';', '&', substr($connection, $prefix_len)), $parts);
+        $parts = [];
+        $dsn = '';
+        $type = '';
 
-            return self::postgresql(
-                $parts['host'] ?? (defined('HOST') ? HOST : 'localhost'),
-                $parts['dbname'] ?? (defined('DATABASE') ? DATABASE : ''),
-                $parts['user'] ?? (defined('USER') ? USER : ''),
-                $parts['pass'] ?? (defined('PASSWORD') ? PASSWORD : ''),
-                $parts['port'] ?? (defined('PORT') ? PORT : '5432')
-            );
+        if (str_starts_with($connection, 'mysql:')) {
+            $dsn = substr($connection, 6);
+            $type = 'mysql';
+        } elseif (str_starts_with($connection, 'postgresql:') || str_starts_with($connection, 'postgres:') || str_starts_with($connection, 'pgsql:')) {
+            $prefix_len = str_starts_with($connection, 'postgresql:') ? 11 : (str_starts_with($connection, 'postgres:') ? 9 : 6);
+            $dsn = substr($connection, $prefix_len);
+            $type = 'postgresql';
         }
 
-        // Handle MySQL DSN
-        if (str_starts_with($connection, 'mysql:')) {
-            $parts = [];
-            parse_str(str_replace(';', '&', substr($connection, 6)), $parts);
+        $pairs = explode(';', $dsn);
+        foreach ($pairs as $pair) {
+            if (strpos($pair, '=') !== false) {
+                list($key, $value) = explode('=', $pair, 2);
+                $parts[strtolower($key)] = $value;
+            }
+        }
 
+        if ($type === 'mysql') {
             return self::mysql(
                 $parts['host'] ?? (defined('HOST') ? HOST : 'localhost'),
                 $parts['dbname'] ?? (defined('DATABASE') ? DATABASE : ''),
@@ -308,6 +310,14 @@ class DatabaseConfig
                 $parts['pass'] ?? (defined('PASSWORD') ? PASSWORD : ''),
                 $parts['port'] ?? (defined('PORT') ? PORT : '3306'),
                 $parts['charset'] ?? 'utf8mb4'
+            );
+        } elseif ($type === 'postgresql') {
+            return self::postgresql(
+                $parts['host'] ?? (defined('HOST') ? HOST : 'localhost'),
+                $parts['dbname'] ?? (defined('DATABASE') ? DATABASE : ''),
+                $parts['user'] ?? (defined('USER') ? USER : ''),
+                $parts['pass'] ?? (defined('PASSWORD') ? PASSWORD : ''),
+                $parts['port'] ?? (defined('PORT') ? PORT : '5432')
             );
         }
 

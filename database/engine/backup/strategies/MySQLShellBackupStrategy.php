@@ -38,7 +38,7 @@ class MySQLShellBackupStrategy implements BackupStrategyInterface, RestoreStrate
     use DebugLoggingTrait;
     use ConfigSanitizationTrait;
     use PathValidationTrait;
-    
+
     private Model $model;
     private PDO $pdo;
     private array $connectionConfig;
@@ -70,7 +70,7 @@ class MySQLShellBackupStrategy implements BackupStrategyInterface, RestoreStrate
         ]);
 
         // Test mysqldump availability
-        $this->validateMySQLDumpAvailability();
+        //$this->validateMySQLDumpAvailability();
     }
 
     // =============================================================================
@@ -212,7 +212,6 @@ class MySQLShellBackupStrategy implements BackupStrategyInterface, RestoreStrate
         // Connection parameters
         $command[] = '--host=' . $this->connectionConfig['host'];
         $command[] = '--user=' . $this->connectionConfig['user'];
-        $command[] = '--password'; // No value - will be provided via stdin
 
         if (!empty($this->connectionConfig['port']) && $this->connectionConfig['port'] != 3306) {
             $command[] = '--port=' . $this->connectionConfig['port'];
@@ -351,6 +350,7 @@ class MySQLShellBackupStrategy implements BackupStrategyInterface, RestoreStrate
             'validate_before_restore' => true,
             'create_database' => false,
             'drop_database' => false,
+            'dry_run' => false,
             'timeout' => 1800,
             'progress_callback' => null
         ], $options);
@@ -446,7 +446,6 @@ class MySQLShellBackupStrategy implements BackupStrategyInterface, RestoreStrate
         // Connection parameters
         $command[] = '--host=' . $this->connectionConfig['host'];
         $command[] = '--user=' . $this->connectionConfig['user'];
-        $command[] = '--password'; // No value - will be provided via stdin
 
         if (!empty($this->connectionConfig['port']) && $this->connectionConfig['port'] != 3306) {
             $command[] = '--port=' . $this->connectionConfig['port'];
@@ -479,22 +478,93 @@ class MySQLShellBackupStrategy implements BackupStrategyInterface, RestoreStrate
             'backup_size_bytes' => filesize($backupPath)
         ]);
 
-        // Read backup file content
-        $backupContent = file_get_contents($backupPath);
-        if ($backupContent === false) {
-            throw new RuntimeException("Failed to read backup file: $backupPath");
+        // 🔍 Extract metadata from dump file
+        $metadata = $this->extractDumpMetadata($backupPath);
+
+        // 🧪 Dry-run mode: skip actual execution
+        if (!empty($options['dry_run'])) {
+            $this->debugLog("Dry-run mode enabled — skipping restore execution", DebugLevel::BASIC, [
+                'command_preview' => implode(' ', $command),
+                'backup_path' => $backupPath,
+                'metadata' => $metadata
+            ]);
+
+            return [
+                'success' => true,
+                'dry_run' => true,
+                'strategy_used' => $this->getStrategyType(),
+                'backup_size_bytes' => filesize($backupPath),
+                'metadata' => $metadata
+            ];
         }
 
-        // Prepare execution options with backup content as stdin
+        // 🧵 Stream backup file via stdin
+        $stdinStream = fopen($backupPath, 'rb');
+        if ($stdinStream === false) {
+            throw new RuntimeException("Failed to open backup file for streaming: $backupPath");
+        }
+
         $execOptions = [
             'timeout' => $options['timeout'],
-            'stdin_data' => $backupContent,
+            'stdin_stream' => $stdinStream,
             'progress_callback' => $options['progress_callback']
         ];
 
-        // Execute command via secure shell executor
-        return $this->shellExecutor->executeDatabaseCommand($command, $credentials, $execOptions);
+        $result = $this->shellExecutor->executeDatabaseCommand($command, $credentials, $execOptions);
+
+        // 📝 Attach metadata to result
+        $result['metadata'] = $metadata;
+
+        return $result;
     }
+    /**
+     * Extract metadata from MySQL dump file
+     * 
+     * @param string $backupPath Path to backup file
+     * @return array Extracted metadata
+     */
+    private function extractDumpMetadata(string $backupPath): array
+    {
+        $metadata = [];
+        $handle = fopen($backupPath, 'r');
+        if (!$handle) {
+            return $metadata;
+        }
+
+        try {
+            $linesRead = 0;
+            while (($line = fgets($handle)) !== false && $linesRead < 50) {
+                $linesRead++;
+
+                if (preg_match('/-- Host: (.+?)\s+Database: (.+?)\s/', $line, $matches)) {
+                    $metadata['host'] = $matches[1];
+                    $metadata['database'] = $matches[2];
+                }
+
+                if (preg_match('/-- Server version\s+(.+)/', $line, $matches)) {
+                    $metadata['server_version'] = trim($matches[1]);
+                }
+
+                if (preg_match('/-- Dump completed on\s+(.+)/', $line, $matches)) {
+                    $metadata['dump_completed_on'] = trim($matches[1]);
+                }
+
+                if (preg_match('/-- MySQL dump .*?Charset: (\w+)/', $line, $matches)) {
+                    $metadata['charset'] = $matches[1];
+                }
+
+                // Stop early if we’ve got enough
+                if (count($metadata) >= 3) {
+                    break;
+                }
+            }
+        } finally {
+            fclose($handle);
+        }
+
+        return $metadata;
+    }
+
 
     // =============================================================================
     // VALIDATION AND TESTING

@@ -47,7 +47,7 @@ class SecureShellExecutor
         $this->model = $model;
         $this->defaultTimeout = $defaultTimeout;
         $this->platformConfig = $this->detectPlatform();
-        
+
         $this->debugLog("Secure shell executor initialized", DebugLevel::VERBOSE, [
             'platform' => $this->platformConfig['platform'],
             'shell_available' => $this->platformConfig['shell_available'],
@@ -98,14 +98,15 @@ class SecureShellExecutor
     {
         $startTime = microtime(true);
         $commandString = $this->buildSecureCommand($command);
-        
+
         // Merge options with defaults
         $options = array_merge([
             'timeout' => $this->defaultTimeout,
             'environment' => [],
             'working_directory' => null,
             'progress_callback' => null,
-            'stdin_data' => null
+            'stdin_data' => null,
+            'stdin_stream' => null
         ], $options);
 
         $this->debugLog("Executing database command", DebugLevel::BASIC, [
@@ -117,12 +118,12 @@ class SecureShellExecutor
 
         // Prepare environment variables including credentials
         $environment = $this->prepareEnvironment($credentials, $options['environment']);
-        
+
         try {
             $result = $this->executeWithProcOpen($commandString, $credentials, $environment, $options);
-            
+
             $duration = microtime(true) - $startTime;
-            
+
             $this->debugLog("Command execution completed", DebugLevel::DETAILED, [
                 'duration_seconds' => round($duration, 3),
                 'return_code' => $result['return_code'],
@@ -139,10 +140,9 @@ class SecureShellExecutor
             ];
 
             return $result;
-
         } catch (Exception $e) {
             $duration = microtime(true) - $startTime;
-            
+
             $this->debugLog("Command execution failed", DebugLevel::BASIC, [
                 'duration_seconds' => round($duration, 3),
                 'exception' => $e->getMessage(),
@@ -193,18 +193,17 @@ class SecureShellExecutor
         try {
             // Handle stdin (credentials and input data)
             $this->handleStdin($pipes[0], $credentials, $options);
-            
+
             // Read stdout and stderr with timeout protection
             $result = $this->readProcessOutput($pipes, $options, $process);
-            
+
             // Wait for process completion
             $returnCode = proc_close($process);
-            
+
             $result['return_code'] = $returnCode;
             $result['success'] = $returnCode === 0;
 
             return $result;
-
         } catch (Exception $e) {
             // Cleanup on error
             $this->cleanupProcess($process, $pipes);
@@ -225,25 +224,34 @@ class SecureShellExecutor
             // Send password if provided
             if (!empty($credentials['password'])) {
                 fwrite($stdin, $credentials['password'] . "\n");
-                
+
                 $this->debugLog("Credentials sent via stdin", DebugLevel::VERBOSE, [
                     'credential_types' => array_keys($credentials)
                 ]);
             }
 
-            // Send additional stdin data if provided
-            if (!empty($options['stdin_data'])) {
+            // Stream input if a stream is provided
+            if (!empty($options['stdin_stream']) && is_resource($options['stdin_stream'])) {
+                $bytesCopied = stream_copy_to_stream($options['stdin_stream'], $stdin);
+                fclose($options['stdin_stream']);
+
+                $this->debugLog("Stdin stream copied", DebugLevel::VERBOSE, [
+                    'stream_bytes_copied' => $bytesCopied
+                ]);
+            }
+            // Otherwise, send raw stdin data
+            elseif (!empty($options['stdin_data'])) {
                 fwrite($stdin, $options['stdin_data']);
-                
+
                 $this->debugLog("Additional stdin data sent", DebugLevel::VERBOSE, [
                     'data_size_bytes' => strlen($options['stdin_data'])
                 ]);
             }
-
         } finally {
             fclose($stdin);
         }
     }
+
 
     /**
      * Read process output with timeout protection and progress tracking
@@ -271,7 +279,7 @@ class SecureShellExecutor
 
         while (true) {
             $currentTime = time();
-            
+
             // Check timeout
             if (($currentTime - $startTime) > $options['timeout']) {
                 proc_terminate($process);
@@ -302,10 +310,10 @@ class SecureShellExecutor
                     'process_running' => $processRunning,
                     'process_status' => $status
                 ];
-                
+
                 call_user_func($options['progress_callback'], $progress);
                 $lastProgressUpdate = $currentTime;
-                
+
                 $this->debugLog("Progress update", DebugLevel::VERBOSE, $progress);
             }
 
@@ -351,10 +359,15 @@ class SecureShellExecutor
         }
 
         // Escape each component
-        $escapedComponents = array_map([$this, 'escapeShellArgument'], $command);
-        
+        $escapedComponents = array_map(function ($arg) {
+            if (!is_string($arg)) {
+                throw new InvalidArgumentException("Command argument must be a string, got " . gettype($arg));
+            }
+            return $this->escapeShellArgument($arg);
+        }, $command);
+
         $commandString = implode(' ', $escapedComponents);
-        
+
         $this->debugLog("Command built and escaped", DebugLevel::VERBOSE, [
             'component_count' => count($command),
             'command_length' => strlen($commandString)
@@ -400,7 +413,8 @@ class SecureShellExecutor
         $this->debugLog("Environment prepared", DebugLevel::VERBOSE, [
             'total_variables' => count($environment),
             'credential_variables' => array_intersect_key($environment, [
-                'MYSQL_PWD' => '', 'PGPASSWORD' => ''
+                'MYSQL_PWD' => '',
+                'PGPASSWORD' => ''
             ]),
             'additional_variables' => array_keys($additionalEnv)
         ]);
@@ -417,7 +431,7 @@ class SecureShellExecutor
     private function sanitizeCommandForLogging(array $command): array
     {
         $sanitized = [];
-        
+
         foreach ($command as $arg) {
             // Hide password-related arguments
             if (strpos($arg, '--password') !== false || strpos($arg, '-p') === 0) {
@@ -428,7 +442,7 @@ class SecureShellExecutor
                 $sanitized[] = $arg;
             }
         }
-        
+
         return $sanitized;
     }
 
@@ -444,7 +458,7 @@ class SecureShellExecutor
     private function detectPlatform(): array
     {
         $isWindows = DIRECTORY_SEPARATOR === '\\';
-        
+
         $config = [
             'platform' => $isWindows ? 'windows' : 'unix',
             'is_windows' => $isWindows,
@@ -510,11 +524,11 @@ class SecureShellExecutor
         try {
             // Test with a simple command
             $testCommand = $this->platformConfig['is_windows'] ? ['echo', 'test'] : ['echo', 'test'];
-            
+
             $result = $this->executeDatabaseCommand($testCommand, [], ['timeout' => 10]);
-            
+
             $available = $result['success'] && trim($result['output']) === 'test';
-            
+
             $this->debugLog("Shell access test completed", DebugLevel::DETAILED, [
                 'available' => $available,
                 'test_output' => trim($result['output']),
@@ -526,7 +540,6 @@ class SecureShellExecutor
                 'test_output' => trim($result['output']),
                 'platform' => $this->platformConfig['platform']
             ];
-
         } catch (Exception $e) {
             $this->debugLog("Shell access test failed", DebugLevel::BASIC, [
                 'error' => $e->getMessage()
@@ -558,22 +571,28 @@ class SecureShellExecutor
     public function isCommandAvailable(string $command): bool
     {
         try {
-            $checkCommand = $this->platformConfig['is_windows'] 
-                ? ['where', $command] 
-                : ['which', $command];
-            
-            $result = $this->executeDatabaseCommand($checkCommand, [], ['timeout' => 10]);
-            
+            $versionCommand = "$command --version";
+            $result = $this->executeWithProcOpen(
+                $versionCommand,
+                [],
+                [],
+                [
+                    'timeout' => 10,
+                    'working_directory' => null,
+                    'progress_callback' => null
+                ]
+            );
+
             $available = $result['success'] && !empty(trim($result['output']));
-            
-            $this->debugLog("Command availability check", DebugLevel::VERBOSE, [
+
+            $this->debugLog("Command availability check via --version", DebugLevel::VERBOSE, [
                 'command' => $command,
                 'available' => $available,
-                'check_output' => trim($result['output'])
+                'version_output' => trim($result['output']),
+                'stderr' => trim($result['error'])
             ]);
 
             return $available;
-
         } catch (Exception $e) {
             $this->debugLog("Command availability check failed", DebugLevel::VERBOSE, [
                 'command' => $command,

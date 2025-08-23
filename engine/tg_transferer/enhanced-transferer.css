@@ -268,6 +268,10 @@ button:focus {
     border-color: var(--success);
 }
 
+.success-message {
+    color: var(--success);
+}
+
 .success:hover {
     background: #219a52;
     border-color: #219a52;

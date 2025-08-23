@@ -89,9 +89,14 @@ class EnhancedTransferer extends Transferer
                 die();
 
             case 'runSql':
-                require_once dirname(__DIR__ , 2) . '/database/engine/core/DatabaseSecurity.php';
+                require_once dirname(__DIR__, 2) . '/database/engine/core/DatabaseSecurity.php';
                 $safePath = DatabaseSecurity::validateRestorePath($data->targetFile);
                 $this->run_sql(file_get_contents($safePath));
+                if (isset($data->originalFile) && !empty($data->originalFile)) {
+                    $originalSafePath = DatabaseSecurity::validateRestorePath($data->originalFile);
+                    $this->delete_file($originalSafePath);
+                }
+                $this->cleanup();
                 die();
 
             default:
@@ -272,6 +277,7 @@ class EnhancedTransferer extends Transferer
         } catch (Exception $e) {
             http_response_code(500);
             echo 'SQL Error: ' . $e->getMessage();
+            exit;
         }
     }
 
@@ -311,6 +317,24 @@ class EnhancedTransferer extends Transferer
     }
 
     /**
+     * Deletes the specified file if it exists and is writable.
+     * If the file does not exist or is not writable, it sends a 403 HTTP response code.
+     *
+     * @param string $filepath The path to the file to be deleted.
+     * @return void
+     */
+    private function delete_file(string $filepath): void
+    {
+        if ((file_exists($filepath)) && (is_writable($filepath))) {
+            unlink($filepath);
+        } else {
+            http_response_code(403);
+            echo $filepath;
+            die();
+        }
+    }
+
+    /**
      * Clean up temporary files
      */
     public function cleanup(): void
@@ -320,18 +344,10 @@ class EnhancedTransferer extends Transferer
         $pattern = $tempDir . DIRECTORY_SEPARATOR . 'translated_*';
 
         foreach (glob($pattern) as $tempFile) {
-            // Only delete files older than 1 hour
-            if (file_exists($tempFile) && (time() - filemtime($tempFile)) > 3600) {
+            if (file_exists($tempFile)) {
                 unlink($tempFile);
             }
         }
     }
 
-    /**
-     * Destructor - cleanup temp files
-     */
-    public function __destruct()
-    {
-        $this->cleanup();
-    }
 }

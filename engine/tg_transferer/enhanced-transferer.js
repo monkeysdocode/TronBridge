@@ -607,7 +607,8 @@ class EnhancedTransferer {
             const params = {
                 sqlCode: this.translatedSQL,
                 action: 'runSql',
-                targetFile: this.tempTranslationFile
+                targetFile: this.tempTranslationFile,
+                originalFile: this.targetFile
             };
 
             const response = await this.makeRequest(params);

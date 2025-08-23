@@ -190,6 +190,8 @@ abstract class QueryBuilder
      * SQL directly for maximum performance. All validation is handled by
      * individual build methods through DatabaseSecurity delegation.
      * 
+     * Supports APCu caching for improved performance.
+     * 
      * @param string $operation Query operation type ('simple_select', 'simple_insert', etc.)
      * @param array<string, mixed> $params Query parameters including table, columns, conditions
      * @return string Generated SQL query
@@ -203,23 +205,29 @@ abstract class QueryBuilder
             $this->getSimpleCacheKey($params)
         ]);
 
-        // Ultra-fast cache check with fixed-length key
-        if (isset(self::$sqlCache[$cacheKey])) {
+        // Check APCu first (falls back to in-memory if not installed/enabled)
+        if (function_exists('apcu_fetch')) {
+            $cached = apcu_fetch('qb_' . $cacheKey);  // Prefix to avoid collisions
+            if ($cached !== false) {
+                self::$cacheHits++;
+                return $cached;
+            }
+        } elseif (isset(self::$sqlCache[$cacheKey])) {  // Fallback to static array
             self::$cacheHits++;
             return self::$sqlCache[$cacheKey];
         }
 
         self::$cacheMisses++;
-
-        // Generate SQL
         $sql = $this->generateSQL($operation, $params);
 
-        // Cache with xxh3 key
-        self::$sqlCache[$cacheKey] = $sql;
-
-        // Prevent cache bloat
-        if (count(self::$sqlCache) > self::MAX_CACHE_SIZE) {
-            self::$sqlCache = array_slice(self::$sqlCache, self::MAX_CACHE_SIZE / 2, null, true);
+        // Store in APCu (TTL of 1 hour; adjust as needed)
+        if (function_exists('apcu_store')) {
+            apcu_store('qb_' . $cacheKey, $sql, 3600);
+        } else {
+            // Prevent cache bloat
+            if (count(self::$sqlCache) > self::MAX_CACHE_SIZE) {
+                self::$sqlCache = array_slice(self::$sqlCache, self::MAX_CACHE_SIZE / 2, null, true);
+            }
         }
 
         return $sql;
@@ -689,6 +697,37 @@ class MySQLQueryBuilder extends QueryBuilder
 {
     protected string $dbType = 'mysql';
 
+    protected static array $translationKeys = [];
+    protected static array $translationValues = [];
+
+    public function __construct() {
+        self::initializeTranslations();
+    }
+    
+    // Static initializer (runs once per PHP process)
+    public static function initializeTranslations(): void {
+        if (!empty(self::$translationKeys)) {
+            return;  // Already initialized
+        }
+        
+        // Order from LONGEST to SHORTEST to prevent substring conflicts!
+        $translations = [
+            // Date/time functions - LONGEST FIRST
+            'CURRENT_TIMESTAMP' => 'NOW()',      // Must come before CURRENT_TIME
+            'CURRENT_DATE' => 'CURDATE()',       // Must come before CURRENT_TIME
+            'CURRENT_TIME' => 'CURTIME()',       // Must come after longer matches
+
+            // String functions  
+            'SUBSTR(' => 'SUBSTRING(',  // PostgreSQL/SQLite style to MySQL
+
+            // Mathematical functions
+            'RANDOM()' => 'RAND()', // PostgreSQL/SQLite style to MySQL
+        ];
+        
+        self::$translationKeys = array_keys($translations);
+        self::$translationValues = array_values($translations);
+    }
+
     protected function buildLimitClause(int $limit, int $offset): string
     {
         return $offset > 0 ? " LIMIT $offset, $limit" : " LIMIT $limit";
@@ -703,24 +742,7 @@ class MySQLQueryBuilder extends QueryBuilder
 
     protected function applyDatabaseSpecificTranslation(string $expression): string
     {
-
-
-        // MySQL translations for PostgreSQL-style and other database functions
-        // CRITICAL: Order from LONGEST to SHORTEST to prevent substring conflicts!
-        $translations = [
-            // Date/time functions - LONGEST FIRST
-            'CURRENT_TIMESTAMP' => 'NOW()',      // Must come before CURRENT_TIME
-            'CURRENT_DATE' => 'CURDATE()',       // Must come before CURRENT_TIME
-            'CURRENT_TIME' => 'CURTIME()',       // Must come after longer matches
-
-            // String functions  
-            'SUBSTR(' => 'SUBSTRING(',  // PostgreSQL/SQLite style to MySQL
-
-            // Mathematical functions
-            'RANDOM()' => 'RAND()', // PostgreSQL/SQLite style to MySQL
-        ];
-
-        return str_ireplace(array_keys($translations), array_values($translations), $expression);
+        return str_ireplace(self::$translationKeys, self::$translationValues, $expression);
     }
 }
 
@@ -730,6 +752,34 @@ class MySQLQueryBuilder extends QueryBuilder
 class SQLiteQueryBuilder extends QueryBuilder
 {
     protected string $dbType = 'sqlite';
+
+    protected static array $translationKeys = [];
+    protected static array $translationValues = [];
+
+    public function __construct() {
+        self::initializeTranslations();
+    }
+    
+    public static function initializeTranslations(): void {
+        if (!empty(self::$translationKeys)) {
+            return;  // Already initialized
+        }
+        
+        // Order from LONGEST to SHORTEST to prevent substring conflicts!
+        $translations = [
+            'CURRENT_TIMESTAMP' => "datetime('now')",
+            'CURRENT_DATE' => "date('now')",
+            'CURRENT_TIME' => "time('now')",
+            'NOW()' => "datetime('now')",
+            'CURDATE()' => "date('now')",
+            'CURTIME()' => "time('now')",
+            'SUBSTRING(' => 'SUBSTR(',
+            'RAND()' => 'RANDOM()',
+        ];
+        
+        self::$translationKeys = array_keys($translations);
+        self::$translationValues = array_values($translations);
+    }
 
     protected function buildLimitClause(int $limit, int $offset): string
     {
@@ -748,20 +798,7 @@ class SQLiteQueryBuilder extends QueryBuilder
 
     protected function applyDatabaseSpecificTranslation(string $expression): string
     {
-        // SQLite-specific function translations
-        // CRITICAL: Order from LONGEST to SHORTEST to prevent substring conflicts!
-        $translations = [
-            'CURRENT_TIMESTAMP' => "datetime('now')",
-            'CURRENT_DATE' => "date('now')",
-            'CURRENT_TIME' => "time('now')",
-            'NOW()' => "datetime('now')",
-            'CURDATE()' => "date('now')",
-            'CURTIME()' => "time('now')",
-            'SUBSTRING(' => 'SUBSTR(',
-            'RAND()' => 'RANDOM()',
-        ];
-
-        return str_ireplace(array_keys($translations), array_values($translations), $expression);
+        return str_ireplace(self::$translationKeys, self::$translationValues, $expression);
     }
 }
 
@@ -771,6 +808,38 @@ class SQLiteQueryBuilder extends QueryBuilder
 class PostgreSQLQueryBuilder extends QueryBuilder
 {
     protected string $dbType = 'postgresql';
+
+    protected static array $translationKeys = [];
+    protected static array $translationValues = [];
+
+    public function __construct() {
+        self::initializeTranslations();
+    }
+    
+    public static function initializeTranslations(): void {
+        if (!empty(self::$translationKeys)) {
+            return;  // Already initialized
+        }
+        
+        // Order from LONGEST to SHORTEST to prevent substring conflicts!
+        $translations = [
+            // Date/time functions
+            'CURRENT_TIMESTAMP()' => 'CURRENT_TIMESTAMP',
+            'CURDATE()' => 'CURRENT_DATE',
+            'CURTIME()' => 'CURRENT_TIME',
+            
+            // String functions
+            'SUBSTR(' => 'SUBSTRING(',   // SQLite style to PostgreSQL
+
+            // Mathematical functions
+            'RAND()' => 'RANDOM()',      // MySQL style to PostgreSQL
+
+            // Note: NOW(), SUBSTRING(), RANDOM() are already standard in PostgreSQL
+        ];
+        
+        self::$translationKeys = array_keys($translations);
+        self::$translationValues = array_values($translations);
+    }
 
     protected function buildLimitClause(int $limit, int $offset): string
     {
@@ -789,22 +858,6 @@ class PostgreSQLQueryBuilder extends QueryBuilder
 
     protected function applyDatabaseSpecificTranslation(string $expression): string
     {
-        // PostgreSQL translations for MySQL-style and other database functions
-        $translations = [
-            // Date/time functions
-            'CURDATE()' => 'CURRENT_DATE',
-            'CURTIME()' => 'CURRENT_TIME',
-            'CURRENT_TIMESTAMP()' => 'CURRENT_TIMESTAMP',
-
-            // String functions
-            'SUBSTR(' => 'SUBSTRING(',   // SQLite style to PostgreSQL
-
-            // Mathematical functions
-            'RAND()' => 'RANDOM()',      // MySQL style to PostgreSQL
-
-            // Note: NOW(), SUBSTRING(), RANDOM() are already standard in PostgreSQL
-        ];
-
-        return str_ireplace(array_keys($translations), array_values($translations), $expression);
+        return str_ireplace(self::$translationKeys, self::$translationValues, $expression);
     }
 }

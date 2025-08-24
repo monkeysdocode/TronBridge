@@ -704,33 +704,6 @@ class DatabasePerformance
         $this->debug = $debug;
     }
 
-    // =============================================================================
-    // UTILITY METHODS
-    // =============================================================================
-
-    /**
-     * Get memory limit in bytes
-     */
-    /*
-    private function getMemoryLimitInBytes(): int
-    {
-        $memoryLimit = ini_get('memory_limit');
-        if ($memoryLimit === '-1') {
-            return PHP_INT_MAX;
-        }
-
-        $unit = strtolower(substr($memoryLimit, -1));
-        $value = (int)substr($memoryLimit, 0, -1);
-
-        return match ($unit) {
-            'g' => $value * 1073741824,
-            'm' => $value * 1048576,
-            'k' => $value * 1024,
-            default => $value
-        };
-    }
-        */
-
     /**
      * Cleanup on destruction
      */
